@@ -1,0 +1,40 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+*.egg-info
+.pytest_cache
+.coverage
+htmlcov/
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Tests (not needed in container)
+tests/
+
+# Temp
+.tmp/
+*.log
+
+# Environment (secrets must be injected via --env-file or runtime env vars)
+# NEVER bake secrets into the image
+.env
+.env.*
+!.env.example
+
+# Docker
+Dockerfile
+docker-compose.yml
+docker-entrypoint.sh
+.dockerignore
+
+# Data (mounted as volume)
+data/*.db

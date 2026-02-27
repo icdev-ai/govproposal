@@ -1,0 +1,153 @@
+# GovProposal Portal — Main Configuration
+# CUI // SP-PROPIN
+
+# SAM.gov API Configuration
+sam_gov:
+  api_base: "https://api.sam.gov/opportunities/v2"
+  entity_api: "https://api.sam.gov/entity-information/v3"
+  # API key set via SAM_GOV_API_KEY env var
+  poll_interval_minutes: 30
+  max_results_per_page: 100
+  default_naics:
+    - "541512"   # Computer Systems Design Services
+    - "541519"   # Other Computer Related Services
+    - "541330"   # Engineering Services
+    - "541511"   # Custom Computer Programming
+    - "541611"   # Administrative Management Consulting
+    - "541690"   # Other Scientific/Technical Consulting
+  default_set_asides:
+    - "SBA"      # Small Business
+    - "8(a)"     # 8(a) Program
+    - "SDVOSB"   # Service-Disabled Veteran-Owned
+    - "WOSB"     # Women-Owned
+    - "HUBZone"
+    - "Total"    # Full and Open
+  watch_agencies:
+    - "Department of Defense"
+    - "Department of the Army"
+    - "Department of the Navy"
+    - "Department of the Air Force"
+    - "Defense Intelligence Agency"
+    - "National Security Agency"
+    - "National Geospatial-Intelligence Agency"
+    - "Defense Information Systems Agency"
+    - "Defense Logistics Agency"
+    - "U.S. Cyber Command"
+    - "Office of the Director of National Intelligence"
+  opportunity_types:
+    - "o"    # Solicitation
+    - "p"    # Presolicitation
+    - "k"    # Combined Synopsis/Solicitation
+    - "r"    # Sources Sought
+    - "i"    # Special Notice (RFI)
+
+# FPDS Configuration
+fpds:
+  api_base: "https://www.fpds.gov/ezsearch/LATEST"
+  lookback_years: 5
+
+# USASpending Configuration
+usa_spending:
+  api_base: "https://api.usaspending.gov/api/v2"
+
+# Proposal Pipeline Stages
+pipeline_stages:
+  - id: discovered
+    label: "Discovered"
+    auto_advance: true
+  - id: qualifying
+    label: "Qualifying"
+    auto_advance: false
+  - id: go_decision
+    label: "Go/No-Go"
+    requires_approval: true
+  - id: capture
+    label: "Capture"
+    auto_advance: false
+  - id: drafting
+    label: "Drafting"
+    auto_advance: false
+  - id: pink_review
+    label: "Pink Team Review"
+    auto_advance: false
+  - id: red_review
+    label: "Red Team Review"
+    auto_advance: false
+  - id: gold_review
+    label: "Gold Team Review"
+    auto_advance: false
+  - id: white_review
+    label: "Final QC"
+    auto_advance: false
+  - id: production
+    label: "Production"
+    auto_advance: false
+  - id: submitted
+    label: "Submitted"
+    auto_advance: false
+  - id: awarded
+    label: "Awarded"
+    terminal: true
+  - id: lost
+    label: "Lost"
+    terminal: true
+  - id: no_bid
+    label: "No Bid"
+    terminal: true
+
+# LLM Configuration
+llm:
+  provider: "bedrock"
+  model: "anthropic.claude-sonnet-4-20250514"
+  drafting_model: "anthropic.claude-sonnet-4-20250514"
+  review_model: "anthropic.claude-sonnet-4-20250514"
+  embedding_model: "amazon.titan-embed-text-v2:0"
+  max_tokens: 4096
+  temperature: 0.3
+
+# Document Defaults
+document:
+  default_font: "Times New Roman"
+  default_font_size: 12
+  default_margins:
+    top: 1.0
+    bottom: 1.0
+    left: 1.0
+    right: 1.0
+  default_line_spacing: 1.0
+  page_number_format: "Page {page} of {total}"
+
+# Classification Defaults
+classification:
+  default_marking: "CUI // SP-PROPIN"
+  banner_top: "CUI // SP-PROPIN"
+  banner_bottom: "CUI // SP-PROPIN"
+  cag_enabled: true
+  require_tagging_before_use: true
+
+# Roles
+roles:
+  - id: admin
+    label: "Administrator"
+    permissions: ["*"]
+  - id: bd_manager
+    label: "BD Manager"
+    permissions: ["opportunities", "pipeline", "competitors", "reports"]
+  - id: capture_lead
+    label: "Capture Lead"
+    permissions: ["opportunities", "capture", "teaming", "win_themes"]
+  - id: proposal_manager
+    label: "Proposal Manager"
+    permissions: ["proposals", "sections", "reviews", "production", "kb"]
+  - id: writer
+    label: "Proposal Writer"
+    permissions: ["sections", "kb_read", "drafting"]
+  - id: reviewer
+    label: "Reviewer"
+    permissions: ["reviews", "proposals_read"]
+  - id: pricing_analyst
+    label: "Pricing Analyst"
+    permissions: ["pricing", "competitors", "fpds"]
+  - id: security_officer
+    label: "Security Officer"
+    permissions: ["cag", "scg", "classifications", "quarantine"]

@@ -1,0 +1,225 @@
+# Classification Aggregation Guard — Rules Configuration
+# CUI // SP-PROPIN
+#
+# Implements EO 13526 Section 1.7(e): Classification by Compilation
+# DoDM 5200.01 Vol 1-4: DoD Information Security Program
+#
+# Rule types:
+#   universal  — Apply to all proposals regardless of program
+#   org        — Organization-specific rules based on company programs
+#   scg        — Parsed from Security Classification Guides (loaded separately)
+
+# Security-relevant data categories
+categories:
+  - id: PERSONNEL
+    description: "Names, clearances, roles, billets, labor categories"
+    indicators:
+      strong: ["clearance", "TS/SCI", "CI poly", "FSP", "full scope poly",
+               "billet", "FTE", "key personnel", "resume", "adjudication",
+               "SCI-eligible", "SAP-cleared", "DCSA"]
+      moderate: ["team lead", "senior engineer", "analyst", "SME",
+                 "years experience", "certified", "program manager"]
+
+  - id: CAPABILITY
+    description: "Technical specifications, throughput, algorithms, tools"
+    indicators:
+      strong: ["throughput", "bandwidth", "intercept", "decrypt", "exploit",
+               "collect", "process", "Gbps", "Tbps", "petabyte", "real-time",
+               "latency", "processing capacity", "sensor", "antenna"]
+      moderate: ["framework", "architecture", "infrastructure", "platform",
+                 "algorithm", "model", "pipeline", "analytics"]
+
+  - id: LOCATION
+    description: "Facilities, deployment sites, theaters of operation"
+    indicators:
+      strong: ["Fort", "Camp", "Base", "AFB", "NSA", "NGA", "CIA", "DISA",
+               "CONUS", "OCONUS", "theater", "AOR", "SCIF", "SAPF",
+               "CENTCOM", "EUCOM", "INDOPACOM", "AFRICOM", "SOUTHCOM",
+               "NORTHCOM", "SPACECOM", "CYBERCOM", "SOCOM", "TRANSCOM",
+               "STRATCOM"]
+      # Specific facility names loaded from context/facilities.yaml
+      moderate: ["on-site", "remote", "deployed", "forward operating",
+                 "operations center", "data center", "watch floor"]
+
+  - id: TIMING
+    description: "Schedules, milestones, deployment dates"
+    indicators:
+      strong: ["deployment date", "IOC", "FOC", "milestone", "go-live",
+               "operational capability", "transition date", "phase-in",
+               "activation date", "stand-up date"]
+      moderate: ["FY", "quarter", "sprint", "PI boundary", "POM",
+                 "FYDP", "schedule", "timeline"]
+
+  - id: PROGRAM
+    description: "Program names, contract numbers, PECE codes"
+    indicators:
+      strong: ["contract number", "CLIN", "PWS", "SOW", "task order",
+               "PECE", "PEO", "program of record", "ACAT",
+               "SAP", "SCI program", "compartmented"]
+      # Program-specific names loaded from context/scg/programs.yaml
+      moderate: ["program", "project", "initiative", "effort"]
+
+  - id: VULNERABILITY
+    description: "System weaknesses, mitigations, pen test results"
+    indicators:
+      strong: ["vulnerability", "exploit", "attack surface", "CVE",
+               "penetration test", "red team", "zero-day", "weakness",
+               "bypass", "unauthorized access"]
+      moderate: ["risk", "mitigation", "remediation", "patch",
+                 "finding", "deficiency"]
+
+  - id: METHOD
+    description: "Collection techniques, TTPs, tradecraft, CONOPS"
+    indicators:
+      strong: ["TTP", "tradecraft", "CONOPS", "collection method",
+               "intercept technique", "exploitation method", "SIGINT",
+               "HUMINT", "GEOINT", "MASINT", "OSINT", "ELINT", "COMINT"]
+      moderate: ["methodology", "approach", "technique", "procedure",
+                 "protocol", "workflow"]
+
+  - id: SCALE
+    description: "Team size, compute capacity, budget, contract value"
+    indicators:
+      strong: ["total personnel", "team size", "FTE count",
+               "compute capacity", "storage capacity",
+               "total contract value", "ceiling", "funding"]
+      moderate: ["headcount", "staff", "resources", "budget"]
+
+  - id: SOURCE
+    description: "Intelligence sources, informants, sensors, feeds"
+    indicators:
+      strong: ["source", "informant", "asset", "sensor feed",
+               "intelligence feed", "collection platform",
+               "national technical means"]
+      moderate: ["data source", "feed", "input", "provider"]
+
+  - id: RELATIONSHIP
+    description: "Teaming partners, subcontractors, foreign liaison"
+    indicators:
+      strong: ["teaming agreement", "subcontractor", "foreign liaison",
+               "allied partner", "five eyes", "FVEY",
+               "international partner", "joint venture"]
+      moderate: ["partner", "vendor", "supplier", "collaborator"]
+
+# Universal Aggregation Rules (EO 13526)
+universal_rules:
+  - id: "UAR-001"
+    name: "capability_location_timing"
+    description: "What + Where + When reveals operational plans"
+    severity: CRITICAL
+    trigger:
+      all_of: [CAPABILITY, LOCATION, TIMING]
+    resulting_classification: "SECRET"
+    action: block_and_alert
+    remediation: "Generalize location or remove specific timing"
+
+  - id: "UAR-002"
+    name: "personnel_program_clearance"
+    description: "Named individual + specific program + clearance reveals staffing"
+    severity: HIGH
+    trigger:
+      all_of: [PERSONNEL, PROGRAM]
+      min_additional: 1
+      any_of: [CAPABILITY, LOCATION, METHOD]
+    resulting_classification: "CONFIDENTIAL"
+    action: review_required
+    remediation: "Remove program-specific association or generalize personnel"
+
+  - id: "UAR-003"
+    name: "scale_budget_program"
+    description: "Team size + budget + program name reveals program scope"
+    severity: HIGH
+    trigger:
+      all_of: [SCALE, PROGRAM]
+      any_of: [CAPABILITY, METHOD]
+    resulting_classification: "CONFIDENTIAL"
+    action: review_required
+    remediation: "Present scale without program association"
+
+  - id: "UAR-004"
+    name: "vulnerability_system_identity"
+    description: "System weakness + enough to identify system = classified"
+    severity: CRITICAL
+    trigger:
+      required: [VULNERABILITY]
+      min_additional: 2
+      any_of: [PROGRAM, CAPABILITY, LOCATION]
+    resulting_classification: "SECRET"
+    action: block_and_alert
+    remediation: "Remove vulnerability details or anonymize system identity"
+
+  - id: "UAR-005"
+    name: "method_source_combination"
+    description: "Collection method + intelligence source reveals tradecraft"
+    severity: CRITICAL
+    trigger:
+      all_of: [METHOD, SOURCE]
+    resulting_classification: "SECRET // SI"
+    action: block_and_alert
+    remediation: "Remove source references entirely"
+
+  - id: "UAR-006"
+    name: "personnel_location_method"
+    description: "Who + Where + How reveals operational posture"
+    severity: HIGH
+    trigger:
+      all_of: [PERSONNEL, LOCATION, METHOD]
+    resulting_classification: "SECRET"
+    action: block_and_alert
+    remediation: "Generalize either location or methodology"
+
+  - id: "UAR-007"
+    name: "relationship_program_capability"
+    description: "Foreign partner + program + capability reveals joint operations"
+    severity: CRITICAL
+    trigger:
+      all_of: [RELATIONSHIP, PROGRAM, CAPABILITY]
+    resulting_classification: "SECRET // NOFORN"
+    action: block_and_alert
+    remediation: "Remove foreign partner association from technical details"
+
+  - id: "UAR-008"
+    name: "scale_capability_location"
+    description: "Resource scale + technical capacity + location reveals force posture"
+    severity: HIGH
+    trigger:
+      all_of: [SCALE, CAPABILITY, LOCATION]
+    resulting_classification: "CONFIDENTIAL"
+    action: review_required
+    remediation: "Present capability without scale or location specifics"
+
+# Proximity risk multipliers
+proximity:
+  same_sentence: 1.0
+  same_paragraph: 0.9
+  same_section: 0.7
+  same_volume: 0.4
+  cross_volume: 0.2
+
+# Cross-proposal aggregation
+cross_proposal:
+  enabled: true
+  lookback_days: 730   # 2 years
+  alert_threshold: 0.6  # Combined proximity score to trigger alert
+
+# Response configuration
+response:
+  alert:
+    severity_range: [LOW, MEDIUM]
+    action: "notify_writer_and_pm"
+    log: true
+  block:
+    severity_range: [HIGH]
+    action: "prevent_export"
+    require_security_officer: true
+    log: true
+  quarantine:
+    severity_range: [CRITICAL]
+    action: "lock_document"
+    require_issm: true
+    generate_incident_report: true
+    log: true
+  sanitize:
+    auto_suggest: true
+    require_approval: true
+    preserve_original: true

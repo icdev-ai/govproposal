@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}{{ app_name }}{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <!-- CUI Banner Top -->
+    <div class="cui-banner cui-banner-top" role="banner" aria-label="Classification banner">
+        {{ cui_banner }}
+    </div>
+
+    <!-- Navigation -->
+    <nav class="main-nav" role="navigation" aria-label="Main navigation">
+        <a href="/" class="nav-brand">GovProposal</a>
+        <div class="nav-links">
+            <a href="{{ url_for('home') }}" class="{% if request.path == '/' %}active{% endif %}">Dashboard</a>
+            <a href="{{ url_for('opportunities') }}" class="{% if '/opportunities' in request.path %}active{% endif %}">Opportunities</a>
+            <a href="{{ url_for('proposals') }}" class="{% if '/proposals' in request.path %}active{% endif %}">Proposals</a>
+            <a href="{{ url_for('knowledge') }}" class="{% if '/knowledge' in request.path %}active{% endif %}">Knowledge Base</a>
+            <a href="{{ url_for('cag_monitor') }}" class="{% if '/cag' in request.path %}active{% endif %}">
+                CAG Monitor
+                {% if open_cag_alerts|default(0) > 0 %}
+                <span class="badge badge-danger">{{ open_cag_alerts }}</span>
+                {% endif %}
+            </a>
+            <a href="{{ url_for('competitors') }}" class="{% if '/competitors' in request.path %}active{% endif %}">Competitors</a>
+            <a href="{{ url_for('analytics') }}" class="{% if '/analytics' in request.path %}active{% endif %}">Analytics</a>
+            <a href="{{ url_for('team') }}" class="{% if '/team' in request.path %}active{% endif %}">Team</a>
+            <a href="{{ url_for('capabilities') }}" class="{% if '/capabilities' in request.path %}active{% endif %}">Capabilities</a>
+            <a href="{{ url_for('crm') }}" class="{% if '/crm' in request.path %}active{% endif %}">CRM</a>
+            <a href="{{ url_for('pricing') }}" class="{% if '/pricing' in request.path %}active{% endif %}">Pricing</a>
+            <a href="{{ url_for('ai_proposals') }}" class="{% if '/ai-proposals' in request.path or '/rfx' in request.path %}active{% endif %}" style="color:#2980b9;font-weight:600">⚡ AI Draft</a>
+        </div>
+    </nav>
+
+    <!-- Flash Messages -->
+    {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+    <div class="flash-messages">
+        {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% endwith %}
+
+    <!-- Main Content -->
+    <main class="content" role="main">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- Footer -->
+    <footer class="main-footer" role="contentinfo">
+        <p>{{ app_name }} | Built with ICDEV | {{ now[:10] }}</p>
+    </footer>
+
+    <!-- CUI Banner Bottom -->
+    <div class="cui-banner cui-banner-bottom" role="banner" aria-label="Classification banner">
+        {{ cui_banner }}
+    </div>
+
+    {% block scripts %}{% endblock %}
+    <script src="{{ url_for('static', filename='js/glossary.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/charts.js') }}"></script>
+    <script src="{{ url_for('static', filename='js/tables.js') }}"></script>
+</body>
+</html>

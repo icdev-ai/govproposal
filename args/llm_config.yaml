@@ -1,0 +1,87 @@
+# GovProposal LLM Configuration — Multi-Provider Routing
+# CUI // SP-PROPIN
+# Adapted from ICDEV Phase 38 (Cloud-Agnostic Architecture)
+
+settings:
+  availability_cache_ttl_seconds: 1800
+  prefer_local: false
+
+# LLM Providers
+providers:
+  bedrock_govcloud:
+    type: bedrock
+    region: "${AWS_DEFAULT_REGION:-us-gov-west-1}"
+    description: "AWS Bedrock in GovCloud (primary)"
+
+  ollama_local:
+    type: ollama
+    base_url: "${OLLAMA_BASE_URL:-http://localhost:11434/v1}"
+    description: "Local Ollama for air-gapped environments"
+
+# Models
+models:
+  claude_sonnet_4:
+    provider: bedrock_govcloud
+    model_id: "anthropic.claude-sonnet-4-20250514"
+    capabilities: ["drafting", "review", "analysis", "cag"]
+    pricing:
+      input_per_1k: 0.003
+      output_per_1k: 0.015
+
+  claude_haiku:
+    provider: bedrock_govcloud
+    model_id: "anthropic.claude-3-5-haiku-20241022"
+    capabilities: ["tagging", "scoring", "classification"]
+    pricing:
+      input_per_1k: 0.001
+      output_per_1k: 0.005
+
+  ollama_qwen:
+    provider: ollama_local
+    model_id: "qwen3:latest"
+    capabilities: ["drafting", "review"]
+
+# Function-level routing with fallback chains
+routing:
+  default:
+    chain: ["claude_sonnet_4", "ollama_qwen"]
+    effort: medium
+
+  content_drafting:
+    chain: ["claude_sonnet_4", "ollama_qwen"]
+    effort: high
+    description: "Proposal section drafting"
+
+  content_review:
+    chain: ["claude_sonnet_4", "ollama_qwen"]
+    effort: high
+    description: "Color team review analysis"
+
+  cag_tagging:
+    chain: ["claude_haiku", "claude_sonnet_4"]
+    effort: medium
+    description: "CAG data classification tagging"
+
+  opportunity_scoring:
+    chain: ["claude_haiku", "claude_sonnet_4"]
+    effort: low
+    description: "Go/No-Go qualification scoring"
+
+  competitive_analysis:
+    chain: ["claude_sonnet_4", "ollama_qwen"]
+    effort: medium
+    description: "Black hat and competitive analysis"
+
+  kb_search:
+    chain: ["claude_haiku", "ollama_qwen"]
+    effort: low
+    description: "Knowledge base semantic search"
+
+# Embedding configuration
+embeddings:
+  default_chain: ["titan_embed"]
+  models:
+    titan_embed:
+      provider: bedrock_govcloud
+      model_id: "amazon.titan-embed-text-v2:0"
+      dimensions: 1024

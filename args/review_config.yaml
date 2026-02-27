@@ -1,0 +1,111 @@
+# GovProposal — Review Cycle Configuration
+# CUI // SP-PROPIN
+
+# Pink Team Review (Compliance)
+pink_team:
+  description: "Verify every Section L instruction is addressed"
+  criteria:
+    - id: "section_coverage"
+      label: "All required sections present"
+      weight: 0.30
+      fail_condition: "Any required section missing"
+    - id: "instruction_compliance"
+      label: "Each instruction in Section L addressed"
+      weight: 0.30
+      fail_condition: "Any instruction not mapped to content"
+    - id: "page_limits"
+      label: "Page limits respected"
+      weight: 0.15
+      fail_condition: "Any section over page limit"
+    - id: "format_compliance"
+      label: "Font, margins, spacing per instructions"
+      weight: 0.15
+      fail_condition: "Any formatting violation"
+    - id: "required_attachments"
+      label: "All required attachments/forms included"
+      weight: 0.10
+      fail_condition: "Missing required attachment"
+  pass_threshold: 0.90
+  scoring:
+    green: 0.90    # Fully compliant
+    yellow: 0.70   # Minor gaps
+    red: 0.70      # Major gaps — stop and fix
+
+# Red Team Review (Responsiveness)
+red_team:
+  description: "Evaluate response against Section M evaluation criteria"
+  criteria:
+    - id: "eval_factor_coverage"
+      label: "Each evaluation factor explicitly addressed"
+      weight: 0.25
+      fail_condition: "Evaluation factor not addressed"
+    - id: "strengths_articulated"
+      label: "Clear strengths tied to eval criteria"
+      weight: 0.20
+    - id: "weaknesses_mitigated"
+      label: "Potential weaknesses preemptively addressed"
+      weight: 0.15
+    - id: "proof_points"
+      label: "Claims backed by evidence/examples"
+      weight: 0.20
+      fail_condition: "Unsubstantiated claim"
+    - id: "discriminators_clear"
+      label: "Why-us differentiators are clear"
+      weight: 0.20
+  pass_threshold: 0.80
+
+# Gold Team Review (Win Theme)
+gold_team:
+  description: "Evaluate win theme integration and persuasiveness"
+  criteria:
+    - id: "theme_consistency"
+      label: "Win themes woven throughout all volumes"
+      weight: 0.25
+    - id: "customer_focus"
+      label: "Customer's mission/pain points centered"
+      weight: 0.25
+    - id: "storytelling"
+      label: "Compelling narrative, not just facts"
+      weight: 0.20
+    - id: "graphics_support"
+      label: "Graphics reinforce key messages"
+      weight: 0.15
+    - id: "executive_summary"
+      label: "Exec summary captures all themes in 2 pages"
+      weight: 0.15
+  pass_threshold: 0.75
+
+# White Team Review (Final QC)
+white_team:
+  description: "Final quality check before submission"
+  criteria:
+    - id: "cross_references"
+      label: "All internal cross-references resolve"
+      weight: 0.20
+      fail_condition: "Broken cross-reference"
+    - id: "acronyms"
+      label: "First-use expansion, acronym list complete"
+      weight: 0.10
+    - id: "consistency"
+      label: "Consistent terminology and naming"
+      weight: 0.15
+    - id: "classification_markings"
+      label: "Correct classification markings on all pages"
+      weight: 0.20
+      fail_condition: "Missing or incorrect marking"
+    - id: "cag_clearance"
+      label: "CAG scan passes — no aggregation violations"
+      weight: 0.20
+      fail_condition: "CAG alert or block"
+    - id: "file_packaging"
+      label: "Correct file names, sizes, volume separation"
+      weight: 0.15
+  pass_threshold: 0.95
+
+# Review scheduling defaults
+scheduling:
+  pink_team_days_before_due: 21
+  red_team_days_before_due: 14
+  gold_team_days_before_due: 10
+  white_team_days_before_due: 5
+  min_review_turnaround_hours: 24

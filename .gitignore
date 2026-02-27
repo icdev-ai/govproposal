@@ -1,0 +1,75 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# GovProposal Portal — .gitignore
+# CUI // SP-PROPIN — Never commit secrets or local environment files
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Secrets & Environment ─────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ── Database (runtime data — not source code) ─────────────────────────────────
+data/*.db
+data/*.db-shm
+data/*.db-wal
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.installed.cfg
+lib/
+lib64/
+MANIFEST
+
+# ── Virtual Environments ──────────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+.env.bak
+
+# ── Testing & Coverage ────────────────────────────────────────────────────────
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+nosetests.xml
+coverage.xml
+*.cover
+
+# ── Uploads & Generated Files ─────────────────────────────────────────────────
+data/rfx_uploads/
+data/rfx_models/
+
+# ── Logs ──────────────────────────────────────────────────────────────────────
+*.log
+logs/
+memory/logs/
+
+# ── IDE / Editor ──────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Claude Code (local settings) ─────────────────────────────────────────────
+.claude/settings.local.json
+memory/
+
+# ── Temp ──────────────────────────────────────────────────────────────────────
+.tmp/
+tmp/
+*.tmp
+*.bak

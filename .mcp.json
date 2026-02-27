@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "govproposal": {
+      "command": "python",
+      "args": ["tools/mcp/proposal_server.py"],
+      "env": {},
+      "disabled": false
+    }
+  }
+}

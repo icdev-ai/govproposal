@@ -1,0 +1,32 @@
+# GovProposal Cloud Configuration
+# CUI // SP-PROPIN
+# Adapted from ICDEV Phase 38 (Cloud-Agnostic Architecture)
+
+# Cloud Service Provider selection
+cloud_provider: aws
+cloud_mode: government    # commercial | government | on_prem | air_gapped
+region: "${AWS_DEFAULT_REGION:-us-gov-west-1}"
+impact_level: IL4
+
+# AWS GovCloud settings
+aws:
+  govcloud: true
+  region: "${AWS_DEFAULT_REGION:-us-gov-west-1}"
+  account_type: govcloud
+  services:
+    secrets: aws_secrets_manager
+    storage: s3
+    kms: aws_kms
+
+# Per-service CSP overrides (optional)
+# Allows routing individual services to different providers
+service_overrides: {}
+  # secrets: local     # Use .env instead of AWS Secrets Manager
+  # storage: local     # Use filesystem instead of S3
+
+# Air-gapped mode settings
+air_gapped:
+  enabled: false
+  ollama_required: true
+  local_embedding: true
+  disable_external_apis: true

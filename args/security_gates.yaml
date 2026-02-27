@@ -1,0 +1,64 @@
+# GovProposal Security Gates Configuration
+# CUI // SP-PROPIN
+# Adapted from ICDEV Phase 37 (MITRE ATLAS) + Phase 38
+
+# CAG (Classification Aggregation Guard) gate
+cag:
+  description: "Classification Aggregation Guard — mosaic effect prevention"
+  blocking_conditions:
+    - cag_status_quarantined
+    - cag_status_blocked_unresolved
+    - untagged_content_in_proposal
+  thresholds:
+    max_unresolved_high_alerts: 0
+    max_unresolved_medium_alerts: 3
+    require_security_officer_review_on_block: true
+
+# Proposal submission gate
+submission:
+  description: "Pre-submission quality and compliance gate"
+  blocking_conditions:
+    - compliance_matrix_incomplete
+    - cag_alerts_unresolved
+    - missing_required_volumes
+    - page_limit_exceeded
+    - missing_required_sections
+  thresholds:
+    min_compliance_coverage_pct: 95
+    min_review_score: 0.70
+    require_white_team_pass: true
+
+# AI Security gate (Phase 37 — MITRE ATLAS)
+atlas_ai:
+  description: "AI security gate — prompt injection, telemetry, BOM"
+  blocking_conditions:
+    - prompt_injection_defense_inactive
+    - high_confidence_injection_unresolved
+    - ai_bom_missing
+  thresholds:
+    max_blocked_injections: 0
+    max_flagged_injections: 5
+    ai_telemetry_required: true
+    ai_bom_max_age_days: 90
+
+# Knowledge base gate
+knowledge_base:
+  description: "KB quality gate — entries must be tagged before use"
+  blocking_conditions:
+    - untagged_kb_entries_used
+    - unapproved_content_in_final
+  thresholds:
+    min_kb_quality_score: 0.60
+    require_tagging_before_use: true
+
+# Review cycle gate
+review:
+  description: "Color team review completion gate"
+  blocking_conditions:
+    - pink_team_not_completed
+    - red_team_not_completed
+  thresholds:
+    min_pink_score: 0.70
+    min_red_score: 0.70
+    min_gold_score: 0.65
+    require_all_reviews_completed: true

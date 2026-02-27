@@ -1,0 +1,55 @@
+# CUI // SP-PROPIN
+# GovProposal Portal — Docker Compose
+# Usage:
+#   docker compose up -d          # Start in background
+#   docker compose logs -f        # Follow logs
+#   docker compose down           # Stop
+#   docker compose down -v        # Stop + remove data volume
+
+services:
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: govproposal
+    ports:
+      - "5001:5001"
+    volumes:
+      # Persist SQLite database across container restarts
+      - govproposal-data:/app/data
+      # Mount args for live config changes (optional)
+      - ./args:/app/args:ro
+      # Mount context for reference data (optional)
+      - ./context:/app/context:ro
+    environment:
+      # --- Required ---
+      GOVPROPOSAL_SECRET: "${GOVPROPOSAL_SECRET:-change-me-in-production}"
+      GOVPROPOSAL_DB_PATH: "/app/data/govproposal.db"
+      GOVPROPOSAL_CUI_BANNER: "${GOVPROPOSAL_CUI_BANNER:-CUI // SP-PROPIN}"
+      FLASK_PORT: "5001"
+      # --- Gunicorn tuning ---
+      GUNICORN_WORKERS: "${GUNICORN_WORKERS:-2}"
+      GUNICORN_THREADS: "${GUNICORN_THREADS:-4}"
+      GUNICORN_TIMEOUT: "${GUNICORN_TIMEOUT:-120}"
+      # --- SAM.gov API (optional) ---
+      SAM_GOV_API_KEY: "${SAM_GOV_API_KEY:-}"
+      # --- LLM Provider (optional — Bedrock or OpenAI-compatible) ---
+      AWS_REGION: "${AWS_REGION:-us-gov-west-1}"
+      AWS_ACCESS_KEY_ID: "${AWS_ACCESS_KEY_ID:-}"
+      AWS_SECRET_ACCESS_KEY: "${AWS_SECRET_ACCESS_KEY:-}"
+      OPENAI_API_KEY: "${OPENAI_API_KEY:-}"
+      OPENAI_BASE_URL: "${OPENAI_BASE_URL:-}"
+      GOVPROPOSAL_LLM_KEY: "${GOVPROPOSAL_LLM_KEY:-}"
+      GOVPROPOSAL_LLM_BASE_URL: "${GOVPROPOSAL_LLM_BASE_URL:-}"
+      GOVPROPOSAL_LLM_MODEL: "${GOVPROPOSAL_LLM_MODEL:-}"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:5001/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+
+volumes:
+  govproposal-data:
+    driver: local

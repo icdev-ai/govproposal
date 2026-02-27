@@ -1,0 +1,122 @@
+# GovProposal — Opportunity Scoring & Qualification Configuration
+# CUI // SP-PROPIN
+
+# Go/No-Go Scoring Dimensions (7 dimensions, weights sum to 1.0)
+qualification:
+  dimensions:
+    customer_relationship:
+      weight: 0.20
+      description: "Prior work with agency, incumbent status, customer access"
+      scoring:
+        incumbent_prime: 1.0
+        incumbent_sub: 0.8
+        prior_work_recent: 0.7    # Within 3 years
+        prior_work_older: 0.5     # 3-5 years
+        known_customer: 0.3       # Met but no contract
+        no_relationship: 0.1
+
+    technical_fit:
+      weight: 0.20
+      description: "Capability coverage vs solicitation requirements"
+      scoring:
+        full_coverage: 1.0        # 100% requirements met in-house
+        strong_coverage: 0.8      # >80% met, rest via teaming
+        moderate_coverage: 0.6    # 60-80% met
+        partial_coverage: 0.3     # 40-60% met
+        weak_coverage: 0.1        # <40% met
+
+    past_performance:
+      weight: 0.15
+      description: "Relevant CPARS ratings and past performance"
+      scoring:
+        exceptional_relevant: 1.0   # Exceptional CPARS on similar work
+        very_good_relevant: 0.8
+        satisfactory_relevant: 0.6
+        mixed_ratings: 0.4
+        no_relevant_pp: 0.2
+
+    competitive_position:
+      weight: 0.15
+      description: "Known competitors, pricing position, differentiators"
+      scoring:
+        strong_position: 1.0      # Few competitors, strong differentiators
+        moderate_position: 0.7    # Some competition, clear differentiators
+        crowded_field: 0.4        # Many competitors, moderate differentiation
+        disadvantaged: 0.2        # Strong incumbents, weak position
+
+    vehicle_access:
+      weight: 0.10
+      description: "Required contract vehicle, GWAC/BPA/IDIQ eligibility"
+      scoring:
+        has_vehicle: 1.0          # On required vehicle
+        can_team_for_vehicle: 0.6 # Partner has vehicle
+        full_and_open: 0.5        # No vehicle required
+        no_vehicle_access: 0.1    # Required vehicle, no access
+
+    clearance_compliance:
+      weight: 0.10
+      description: "Facility clearance, personnel clearances, certifications"
+      scoring:
+        fully_cleared: 1.0        # All clearances held
+        mostly_cleared: 0.7       # >80% cleared, can clear rest
+        partially_cleared: 0.4    # 50-80%, timeline risk
+        insufficient: 0.1         # Major clearance gaps
+
+    strategic_value:
+      weight: 0.10
+      description: "Revenue impact, strategic relationship, growth potential"
+      scoring:
+        transformational: 1.0     # Opens new market, >$50M TCV
+        significant: 0.8          # >$10M TCV, strategic customer
+        moderate: 0.5             # $1-10M TCV
+        limited: 0.3              # <$1M TCV or one-time
+        misaligned: 0.1           # Diverts from strategy
+
+  # Decision thresholds
+  thresholds:
+    strong_go: 0.75               # Score >= 0.75: Strong Go recommendation
+    conditional_go: 0.55          # 0.55-0.75: Go with conditions/teaming
+    no_bid: 0.55                  # Below 0.55: No Bid recommendation
+
+  # Automatic No-Bid triggers (override score)
+  auto_no_bid:
+    - "clearance_compliance < 0.2 AND clearance required"
+    - "vehicle_access < 0.2 AND specific vehicle required"
+    - "technical_fit < 0.3"
+
+# Opportunity-Company Fit Scoring (automated, pre-qualification)
+fit_scoring:
+  naics_match_weight: 0.25
+  agency_match_weight: 0.20
+  set_aside_match_weight: 0.15
+  keyword_match_weight: 0.20
+  contract_size_match_weight: 0.10
+  clearance_match_weight: 0.10
+
+  # Keywords that boost/reduce fit
+  boost_keywords:
+    - "cloud migration"
+    - "DevSecOps"
+    - "zero trust"
+    - "artificial intelligence"
+    - "cybersecurity"
+    - "data analytics"
+    - "software development"
+    - "agile"
+    - "digital transformation"
+    - "IT modernization"
+  penalty_keywords:
+    - "construction"
+    - "janitorial"
+    - "food service"
+    - "medical supplies"
+
+# Past Performance Relevance Scoring
+past_performance:
+  relevance_dimensions:
+    scope_similarity: 0.30        # Similar scope/requirements
+    agency_match: 0.20            # Same or similar agency
+    size_proximity: 0.15          # Similar contract value
+    recency: 0.15                 # More recent = more relevant
+    rating_quality: 0.20          # CPARS rating
+  min_relevance_score: 0.40       # Below this, don't include in proposal
