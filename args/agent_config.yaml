@@ -1,0 +1,22 @@
+# Agent Configuration — GovProposal
+# Defines the orchestration layer identity and model routing.
+
+orchestrator:
+  name: govproposal-orchestrator
+  role: orchestration
+  description: "GovProposal AI orchestrator — reads goals, selects tools, applies args, references context"
+  model: claude-sonnet
+  capabilities:
+    - proposal_lifecycle
+    - cag_monitoring
+    - review_coordination
+    - knowledge_search
+    - competitive_analysis
+
+# LLM function routing (mirrors args/llm_config.yaml)
+model_routing:
+  content_drafting: claude-sonnet    # Best quality for proposal writing
+  cag_tagging: claude-haiku          # Fast classification tagging
+  kb_search: claude-haiku            # Efficient knowledge retrieval
+  review_analysis: claude-sonnet     # Thorough review scoring
+  opportunity_scoring: claude-haiku  # Quick scoring assessments

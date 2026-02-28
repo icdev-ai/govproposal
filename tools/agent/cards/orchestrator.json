@@ -1,0 +1,25 @@
+{
+  "name": "govproposal-orchestrator",
+  "description": "GovProposal AI orchestrator — reads goals, selects tools, applies args, references context for government proposal lifecycle management",
+  "version": "1.0.0",
+  "capabilities": [
+    "proposal_lifecycle",
+    "cag_monitoring",
+    "review_coordination",
+    "knowledge_search",
+    "competitive_analysis"
+  ],
+  "protocols": ["a2a"],
+  "endpoints": {
+    "health": "/health",
+    "agent_card": "/.well-known/agent.json"
+  },
+  "model": "claude-sonnet",
+  "gotcha_layers": {
+    "goals": "goals/",
+    "tools": "tools/",
+    "args": "args/",
+    "context": "context/",
+    "hardprompts": "hardprompts/"
+  }
+}

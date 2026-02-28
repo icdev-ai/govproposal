@@ -29,11 +29,70 @@ individually unclassified data elements combine to create classified information
 | **Context** | `context/` | FAR/DFARS references, proposal templates, SCGs, NAICS codes |
 | **Hard Prompts** | `hardprompts/` | LLM templates for drafting, reviewing, analyzing |
 
+### Key Files
+- `goals/manifest.md` — Index of all goal workflows. Check before starting any task.
+- `tools/manifest.md` — Master list of all tools. Check before writing a new script.
+- `memory/MEMORY.md` — Curated long-term facts/preferences, read at session start.
+- `memory/logs/YYYY-MM-DD.md` — Daily session logs.
+- `tools/agent/cards/orchestrator.json` — A2A agent card.
+- `.env` — API keys and environment variables.
+- `.tmp/` — Disposable scratch work. Never store important data here.
+
+### How to Operate
+
+1. **Check goals first** — Read `goals/manifest.md` before starting a task. If a goal exists, follow it.
+2. **Check tools first** — Read `tools/manifest.md` before writing new code. If you create a new tool, add it to the manifest.
+3. **When tools fail** — Read the error, fix the tool, update the goal with what you learned.
+4. **Goals are living docs** — Update when better approaches emerge. Never modify/create goals without explicit permission.
+5. **When stuck** — Explain what's missing and what you need. Don't guess or invent capabilities.
+
+### Session Start Protocol
+1. Read `memory/MEMORY.md` for long-term context
+2. Read today's daily log (`memory/logs/YYYY-MM-DD.md`)
+3. Read yesterday's log for continuity
+4. Or run: `python tools/memory/memory_read.py --format markdown`
+
+---
+
+## Existing Goals
+
+| Goal | File | Purpose |
+|------|------|---------|
+| ATLAS Workflow | `goals/build_app.md` | 5-step build: Architect → Trace → Link → Assemble → Stress-test |
+| Proposal Lifecycle | `goals/proposal_lifecycle.md` | 7-phase Shipley lifecycle: Monitor → Qualify → Capture → Draft → Review → Produce → Learn |
+| CAG Workflow | `goals/cag_workflow.md` | 4-layer classification defense against mosaic effect |
+
+---
+
+## Hard Prompts
+
+| Template | File | Purpose |
+|----------|------|---------|
+| Proposal Drafting | `hardprompts/proposal/drafting.md` | Section drafting: structure, compliance matrix, win themes, volume guidance |
+| Proposal Review | `hardprompts/proposal/review.md` | Pink/Red/Gold/White team review criteria and scoring |
+| CAG Tagging | `hardprompts/cag/classification_tagging.md` | Classification tagging: 10 security categories, aggregation detection |
+| Orchestrator | `hardprompts/agent/orchestrator.md` | Agent orchestration: GOTCHA layer references, tool selection, error handling |
+
 ---
 
 ## Commands
 
 ```bash
+# Memory System
+python tools/memory/memory_read.py --format markdown          # Load MEMORY.md + today's log
+
+# Audit Trail (append-only, NIST AU compliant)
+python tools/audit/audit_logger.py \
+    --event-type "proposal.draft" \
+    --actor "orchestrator" \
+    --action "Drafted technical approach section" \
+    --project-id "PROP-123" \
+    --json
+
+# Health Check
+python tools/testing/health_check.py                          # System component verification
+python tools/testing/health_check.py --json                   # JSON output
+
 # Database
 python tools/db/init_db.py                              # Initialize database (all tables)
 
@@ -267,6 +326,7 @@ across all proposals to detect compilation risk.
 | `args/llm_config.yaml` | Multi-provider LLM routing: providers, models, fallback chains, embeddings (Phase 38) |
 | `args/cloud_config.yaml` | Cloud-agnostic config: CSP selection, cloud_mode, region, impact_level (Phase 38) |
 | `args/security_gates.yaml` | Gate thresholds: CAG, submission, AI security, knowledge base, review (Phase 37) |
+| `args/agent_config.yaml` | Orchestrator identity, model routing, capabilities |
 
 ---
 
