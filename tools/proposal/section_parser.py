@@ -5,15 +5,27 @@
 # Distribution: D
 # POC: GovProposal System Administrator
 """Parse solicitation documents to extract Section L (Instructions) and Section M
-(Evaluation Criteria).
+(Evaluation Criteria), plus deep "shredding" of all requirement-bearing sections.
 
 Supports plain-text, PDF (via pypdf), and Word (via python-docx) input formats.
 Extracts structured requirements, page limits, format rules, evaluation factors,
 and relative importance weightings.  Results are stored in the proposals table
 (section_l_parsed, section_m_parsed) and feed into the compliance-matrix generator.
 
+Shredder mode (--shred) extracts requirements from ALL sections:
+  - Section C / SOW (Statement of Work) — shall/must/will statements
+  - Section F (Deliverables & Performance) — delivery schedules, milestones
+  - Section H (Special Contract Requirements) — clauses, CDRLs
+  - Section J (Attachments) — referenced document requirements
+  - Section L (Instructions to Offerors) — proposal instructions
+  - Section M (Evaluation Criteria) — evaluation factors
+
+Each extracted requirement includes obligation level, source section, and
+cross-references to other sections (FAR, DFARS, attachments).
+
 Usage:
     python tools/proposal/section_parser.py --parse --file /path/to/rfp.pdf --proposal-id "prop-123" --json
+    python tools/proposal/section_parser.py --shred --file /path/to/rfp.pdf --proposal-id "prop-123" --json
     python tools/proposal/section_parser.py --text "Section L ..." --json
     python tools/proposal/section_parser.py --matrix --proposal-id "prop-123" --json
     python tools/proposal/section_parser.py --get-matrix --proposal-id "prop-123" --json
@@ -463,6 +475,546 @@ def extract_requirements(text):
 
 
 # ---------------------------------------------------------------------------
+# Shredder — deep multi-section requirement extraction
+# ---------------------------------------------------------------------------
+
+# Section boundary patterns for all extractable sections
+_SECTION_C_PATTERNS = [
+    re.compile(r"(?i)\bSECTION\s+C[\.\s:\-—]+", re.MULTILINE),
+    re.compile(r"(?i)\bC[\.\s]+(?:DESCRIPTION|STATEMENT\s+OF\s+WORK|SOW|SPECIFICATIONS)\b", re.MULTILINE),
+    re.compile(r"(?i)\bSTATEMENT\s+OF\s+WORK\b", re.MULTILINE),
+    re.compile(r"(?i)\bPERFORMANCE\s+WORK\s+STATEMENT\b", re.MULTILINE),
+]
+
+_SECTION_F_PATTERNS = [
+    re.compile(r"(?i)\bSECTION\s+F[\.\s:\-—]+", re.MULTILINE),
+    re.compile(r"(?i)\bF[\.\s]+DELIVER(?:IES|Y|ABLES)\b", re.MULTILINE),
+    re.compile(r"(?i)\bDELIVER(?:IES|Y)\s+(?:OR|AND)\s+PERFORMANCE\b", re.MULTILINE),
+]
+
+_SECTION_H_PATTERNS = [
+    re.compile(r"(?i)\bSECTION\s+H[\.\s:\-—]+", re.MULTILINE),
+    re.compile(r"(?i)\bH[\.\s]+SPECIAL\s+CONTRACT\s+REQUIREMENTS\b", re.MULTILINE),
+    re.compile(r"(?i)\bSPECIAL\s+CONTRACT\s+REQUIREMENTS\b", re.MULTILINE),
+]
+
+_SECTION_J_PATTERNS = [
+    re.compile(r"(?i)\bSECTION\s+J[\.\s:\-—]+", re.MULTILINE),
+    re.compile(r"(?i)\bJ[\.\s]+(?:LIST\s+OF\s+)?ATTACH(?:MENTS|ED\s+DOCUMENTS)\b", re.MULTILINE),
+    re.compile(r"(?i)\bLIST\s+OF\s+ATTACHMENTS\b", re.MULTILINE),
+]
+
+# Cross-reference detection patterns
+_XREF_PATTERNS = [
+    re.compile(r"(?i)(?:see|refer\s+to|per|in\s+accordance\s+with|IAW|ref(?:erence)?)\s+Section\s+([A-Z](?:\.\d+)*)", re.MULTILINE),
+    re.compile(r"(?i)(?:per|IAW|in\s+accordance\s+with)\s+(FAR\s+\d+\.\d+(?:\.\d+)?(?:-\d+)?)", re.MULTILINE),
+    re.compile(r"(?i)(?:per|IAW|in\s+accordance\s+with)\s+(DFARS\s+\d+\.\d+(?:\.\d+)?(?:-\d+)?)", re.MULTILINE),
+    re.compile(r"(?i)(?:see|refer\s+to|per|reference)\s+Attachment\s+([A-Z0-9]+(?:\s*[-–]\s*[A-Za-z0-9 ]+)?)", re.MULTILINE),
+    re.compile(r"(?i)(?:see|refer\s+to|per|reference)\s+Exhibit\s+([A-Z0-9]+)", re.MULTILINE),
+    re.compile(r"(?i)(CDRL\s+[A-Z]?\d+(?:-\d+)?)", re.MULTILINE),
+    re.compile(r"(?i)(DD\s+Form\s+\d+)", re.MULTILINE),
+    re.compile(r"(?i)(DI-[A-Z]+-\d+[A-Z]?)", re.MULTILINE),
+]
+
+# Obligation-level keywords
+_OBLIGATION_PATTERNS = {
+    "shall": re.compile(r"\bshall\b", re.IGNORECASE),
+    "must": re.compile(r"\bmust\b", re.IGNORECASE),
+    "will": re.compile(r"\bwill\b", re.IGNORECASE),
+    "should": re.compile(r"\bshould\b", re.IGNORECASE),
+    "may": re.compile(r"\bmay\b", re.IGNORECASE),
+}
+
+# CDRL / deliverable pattern
+_CDRL_PATTERN = re.compile(
+    r"(?:CDRL|Data\s+Item|Deliverable)\s*(?:#|No\.?|Number)?\s*[:\s]*([A-Z]?\d+(?:-\d+)?)",
+    re.IGNORECASE,
+)
+
+# Delivery schedule pattern
+_DELIVERY_PATTERN = re.compile(
+    r"(?:deliver(?:ed|y|able)?|submit(?:ted)?|provide(?:d)?|due)\s+"
+    r"(?:within|by|no\s+later\s+than|NLT)\s+"
+    r"([^.;]{5,120})[.;]",
+    re.IGNORECASE,
+)
+
+
+def _detect_obligation_level(text):
+    """Determine the obligation level of a requirement statement.
+
+    Returns one of: 'shall', 'must', 'will', 'should', 'may', 'unknown'.
+    Priority order: shall > must > will > should > may.
+    """
+    for level in ("shall", "must", "will", "should", "may"):
+        if _OBLIGATION_PATTERNS[level].search(text):
+            return level
+    return "unknown"
+
+
+def _detect_cross_references(text):
+    """Extract all cross-references from a requirement statement.
+
+    Returns list of dicts with 'type' and 'reference' keys.
+    """
+    refs = []
+    seen = set()
+    for pat in _XREF_PATTERNS:
+        for m in pat.finditer(text):
+            ref_text = m.group(1) if m.lastindex else m.group(0)
+            ref_text = ref_text.strip()
+            if ref_text.lower() not in seen:
+                seen.add(ref_text.lower())
+                # Classify the reference type
+                ref_lower = ref_text.lower()
+                if "far " in ref_lower:
+                    ref_type = "far_clause"
+                elif "dfars" in ref_lower:
+                    ref_type = "dfars_clause"
+                elif "section" in ref_lower:
+                    ref_type = "section"
+                elif "attachment" in ref_lower or "exhibit" in ref_lower:
+                    ref_type = "attachment"
+                elif "cdrl" in ref_lower or "di-" in ref_lower:
+                    ref_type = "cdrl"
+                elif "dd form" in ref_lower:
+                    ref_type = "form"
+                else:
+                    ref_type = "other"
+                refs.append({"type": ref_type, "reference": ref_text})
+    return refs
+
+
+def _extract_sow_requirements(text):
+    """Extract requirements from Section C / Statement of Work.
+
+    Focuses on shall/must/will statements with SOW context.
+    """
+    requirements = []
+    seen = set()
+
+    for m in _REQ_PATTERN.finditer(text):
+        full = m.group(0).strip()
+        norm = full[:80].lower()
+        if norm in seen:
+            continue
+        seen.add(norm)
+
+        obligation = _detect_obligation_level(full)
+        xrefs = _detect_cross_references(full)
+
+        requirements.append({
+            "requirement_text": full,
+            "obligation_level": obligation,
+            "cross_references": xrefs if xrefs else None,
+            "source_section": "section_c",
+        })
+
+    return requirements
+
+
+def _extract_special_requirements(text):
+    """Extract requirements from Section H (Special Contract Requirements).
+
+    Extracts clauses, CDRLs, and special provisions.
+    """
+    requirements = []
+    seen = set()
+
+    # Extract shall/must/will statements
+    for m in _REQ_PATTERN.finditer(text):
+        full = m.group(0).strip()
+        norm = full[:80].lower()
+        if norm in seen:
+            continue
+        seen.add(norm)
+
+        obligation = _detect_obligation_level(full)
+        xrefs = _detect_cross_references(full)
+
+        requirements.append({
+            "requirement_text": full,
+            "obligation_level": obligation,
+            "cross_references": xrefs if xrefs else None,
+            "source_section": "section_h",
+        })
+
+    # Extract CDRLs referenced in Section H
+    for m in _CDRL_PATTERN.finditer(text):
+        cdrl_id = m.group(1).strip()
+        ctx_start = max(0, m.start() - 100)
+        ctx_end = min(len(text), m.end() + 200)
+        context = text[ctx_start:ctx_end].strip()
+
+        cdrl_key = f"cdrl_{cdrl_id}".lower()
+        if cdrl_key not in seen:
+            seen.add(cdrl_key)
+            requirements.append({
+                "requirement_text": f"CDRL {cdrl_id}: {context[:200]}",
+                "obligation_level": "shall",
+                "cross_references": [{"type": "cdrl", "reference": f"CDRL {cdrl_id}"}],
+                "source_section": "section_h",
+            })
+
+    return requirements
+
+
+def _extract_deliverables(text):
+    """Extract requirements from Section F (Deliverables & Performance).
+
+    Focuses on delivery schedules, milestones, and performance requirements.
+    """
+    requirements = []
+    seen = set()
+
+    # Standard shall/must/will statements
+    for m in _REQ_PATTERN.finditer(text):
+        full = m.group(0).strip()
+        norm = full[:80].lower()
+        if norm in seen:
+            continue
+        seen.add(norm)
+
+        obligation = _detect_obligation_level(full)
+        xrefs = _detect_cross_references(full)
+
+        requirements.append({
+            "requirement_text": full,
+            "obligation_level": obligation,
+            "cross_references": xrefs if xrefs else None,
+            "source_section": "section_f",
+        })
+
+    # Delivery schedule items
+    for m in _DELIVERY_PATTERN.finditer(text):
+        full = m.group(0).strip()
+        norm = full[:80].lower()
+        if norm not in seen:
+            seen.add(norm)
+            requirements.append({
+                "requirement_text": full,
+                "obligation_level": "shall",
+                "cross_references": _detect_cross_references(full) or None,
+                "source_section": "section_f",
+            })
+
+    return requirements
+
+
+def _extract_attachment_requirements(text):
+    """Extract requirements from Section J (Attachments/Exhibits).
+
+    Identifies referenced documents and their incorporation requirements.
+    """
+    requirements = []
+    seen = set()
+
+    # Extract shall/must/will statements
+    for m in _REQ_PATTERN.finditer(text):
+        full = m.group(0).strip()
+        norm = full[:80].lower()
+        if norm in seen:
+            continue
+        seen.add(norm)
+
+        obligation = _detect_obligation_level(full)
+        xrefs = _detect_cross_references(full)
+
+        requirements.append({
+            "requirement_text": full,
+            "obligation_level": obligation,
+            "cross_references": xrefs if xrefs else None,
+            "source_section": "section_j",
+        })
+
+    # Detect attachment references with descriptions
+    attach_pat = re.compile(
+        r"(?:Attachment|Exhibit)\s+([A-Z0-9]+)\s*[\-–:]\s*([^\n]{5,200})",
+        re.IGNORECASE,
+    )
+    for m in attach_pat.finditer(text):
+        attach_id = m.group(1).strip()
+        attach_desc = m.group(2).strip()
+        norm = f"attach_{attach_id}".lower()
+        if norm not in seen:
+            seen.add(norm)
+            requirements.append({
+                "requirement_text": f"Attachment {attach_id}: {attach_desc}",
+                "obligation_level": "shall",
+                "cross_references": [{"type": "attachment", "reference": f"Attachment {attach_id}"}],
+                "source_section": "section_j",
+            })
+
+    return requirements
+
+
+def shred_solicitation(file_path, proposal_id=None, db_path=None):
+    """Deep-extract ALL requirements from a solicitation document.
+
+    Unlike parse_solicitation (which only extracts Section L/M), this
+    "shreds" the entire document extracting requirements from:
+      - Section C / SOW
+      - Section F (Deliverables)
+      - Section H (Special Requirements)
+      - Section J (Attachments)
+      - Section L (Instructions)
+      - Section M (Evaluation Criteria)
+
+    Each requirement includes obligation level, source section, and
+    cross-references to other documents/sections.
+
+    Args:
+        file_path: Path to solicitation document (PDF, DOCX, TXT).
+        proposal_id: If provided, store shredded requirements in DB.
+        db_path: Override database path.
+
+    Returns:
+        dict with shredded requirements by section, totals, and metadata.
+    """
+    text = _read_file(file_path)
+    all_requirements = []
+
+    # --- Extract Section C / SOW ---
+    _stop_after_c = [
+        re.compile(r"(?i)\bSECTION\s+[D-Z][\.\s:\-—]+", re.MULTILINE),
+    ]
+    raw_c = _find_section(text, _SECTION_C_PATTERNS, _stop_after_c)
+    sow_reqs = _extract_sow_requirements(raw_c) if raw_c else []
+    all_requirements.extend(sow_reqs)
+
+    # --- Extract Section F (Deliverables) ---
+    _stop_after_f = [
+        re.compile(r"(?i)\bSECTION\s+[G-Z][\.\s:\-—]+", re.MULTILINE),
+    ]
+    raw_f = _find_section(text, _SECTION_F_PATTERNS, _stop_after_f)
+    deliverable_reqs = _extract_deliverables(raw_f) if raw_f else []
+    all_requirements.extend(deliverable_reqs)
+
+    # --- Extract Section H (Special Requirements) ---
+    _stop_after_h = [
+        re.compile(r"(?i)\bSECTION\s+[I-Z][\.\s:\-—]+", re.MULTILINE),
+    ]
+    raw_h = _find_section(text, _SECTION_H_PATTERNS, _stop_after_h)
+    special_reqs = _extract_special_requirements(raw_h) if raw_h else []
+    all_requirements.extend(special_reqs)
+
+    # --- Extract Section J (Attachments) ---
+    _stop_after_j = [
+        re.compile(r"(?i)\bSECTION\s+[K-Z][\.\s:\-—]+", re.MULTILINE),
+    ]
+    raw_j = _find_section(text, _SECTION_J_PATTERNS, _stop_after_j)
+    attachment_reqs = _extract_attachment_requirements(raw_j) if raw_j else []
+    all_requirements.extend(attachment_reqs)
+
+    # --- Extract Section L (Instructions) — reuse existing parser ---
+    parsed = parse_text(text)
+    for item in parsed.get("sections_l", []):
+        inst_text = item.get("instruction_text", "")
+        all_requirements.append({
+            "requirement_text": inst_text,
+            "obligation_level": _detect_obligation_level(inst_text),
+            "cross_references": _detect_cross_references(inst_text) or None,
+            "source_section": "section_l",
+        })
+
+    # --- Extract Section M (Evaluation Criteria) ---
+    for item in parsed.get("sections_m", []):
+        factor = item.get("factor", "")
+        subfactors = item.get("subfactors") or []
+        full_text = factor
+        if subfactors:
+            sf_text = "; ".join(sf.get("text", "") for sf in subfactors)
+            full_text = f"{factor} [Subfactors: {sf_text}]"
+        all_requirements.append({
+            "requirement_text": full_text,
+            "obligation_level": "shall",
+            "cross_references": _detect_cross_references(full_text) or None,
+            "source_section": "section_m",
+        })
+
+    # Deduplicate by first 80 chars of requirement text
+    deduped = []
+    seen_norms = set()
+    for req in all_requirements:
+        norm = req["requirement_text"][:80].lower()
+        if norm not in seen_norms:
+            seen_norms.add(norm)
+            req["requirement_id"] = f"REQ-{_uid()[:8]}"
+            deduped.append(req)
+
+    # Count by section
+    section_counts = {}
+    for req in deduped:
+        src = req["source_section"]
+        section_counts[src] = section_counts.get(src, 0) + 1
+
+    # Count by obligation level
+    obligation_counts = {}
+    for req in deduped:
+        obl = req["obligation_level"]
+        obligation_counts[obl] = obligation_counts.get(obl, 0) + 1
+
+    # Count cross-references
+    total_xrefs = sum(
+        len(req.get("cross_references") or []) for req in deduped
+    )
+
+    result = {
+        "source_file": str(file_path),
+        "total_requirements": len(deduped),
+        "section_counts": section_counts,
+        "obligation_counts": obligation_counts,
+        "total_cross_references": total_xrefs,
+        "requirements": deduped,
+        "format_requirements": parsed.get("format_requirements", {}),
+        "shredded_at": _now(),
+    }
+
+    # Store in DB if proposal_id provided
+    if proposal_id:
+        conn = _get_db(db_path)
+        try:
+            # Ensure shredded_requirements table exists
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS shredded_requirements (
+                    id TEXT PRIMARY KEY,
+                    proposal_id TEXT NOT NULL REFERENCES proposals(id),
+                    requirement_id TEXT NOT NULL,
+                    requirement_text TEXT NOT NULL,
+                    obligation_level TEXT NOT NULL DEFAULT 'unknown'
+                        CHECK(obligation_level IN ('shall', 'must', 'will',
+                              'should', 'may', 'unknown')),
+                    source_section TEXT NOT NULL
+                        CHECK(source_section IN ('section_c', 'section_f',
+                              'section_h', 'section_j', 'section_l',
+                              'section_m', 'other')),
+                    cross_references TEXT,
+                    compliance_status TEXT NOT NULL DEFAULT 'not_addressed'
+                        CHECK(compliance_status IN ('not_addressed',
+                              'partially_addressed', 'fully_addressed',
+                              'not_applicable')),
+                    mapped_section_id TEXT,
+                    notes TEXT,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                )
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_shreq_prop
+                    ON shredded_requirements(proposal_id)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_shreq_source
+                    ON shredded_requirements(source_section)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_shreq_obligation
+                    ON shredded_requirements(obligation_level)
+            """)
+            conn.execute("""
+                CREATE INDEX IF NOT EXISTS idx_shreq_status
+                    ON shredded_requirements(compliance_status)
+            """)
+
+            # Insert requirements
+            for req in deduped:
+                conn.execute(
+                    "INSERT INTO shredded_requirements "
+                    "(id, proposal_id, requirement_id, requirement_text, "
+                    "obligation_level, source_section, cross_references, "
+                    "compliance_status, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, 'not_addressed', ?)",
+                    (
+                        _uid(),
+                        proposal_id,
+                        req["requirement_id"],
+                        req["requirement_text"],
+                        req["obligation_level"],
+                        req["source_section"],
+                        json.dumps(req["cross_references"]) if req.get("cross_references") else None,
+                        _now(),
+                    ),
+                )
+
+            # Also run standard L/M parse and store
+            conn.execute(
+                "UPDATE proposals SET section_l_parsed = ?, section_m_parsed = ?, updated_at = ? "
+                "WHERE id = ?",
+                (
+                    json.dumps(parsed.get("sections_l", [])),
+                    json.dumps(parsed.get("sections_m", [])),
+                    _now(),
+                    proposal_id,
+                ),
+            )
+
+            _audit(conn, "proposal.shredded",
+                   f"Shredded solicitation from {file_path}",
+                   "proposal", proposal_id,
+                   json.dumps({
+                       "total": len(deduped),
+                       "sections": section_counts,
+                       "obligations": obligation_counts,
+                       "cross_refs": total_xrefs,
+                   }))
+            conn.commit()
+        finally:
+            conn.close()
+
+    return result
+
+
+def get_shredded_requirements(proposal_id, source_section=None,
+                               obligation_level=None, db_path=None):
+    """Retrieve shredded requirements for a proposal with optional filters.
+
+    Args:
+        proposal_id: Proposal ID.
+        source_section: Filter by source section (section_c, section_f, etc.).
+        obligation_level: Filter by obligation (shall, must, will, etc.).
+        db_path: Override database path.
+
+    Returns:
+        dict with requirements list and counts.
+    """
+    conn = _get_db(db_path)
+    try:
+        query = "SELECT * FROM shredded_requirements WHERE proposal_id = ?"
+        params = [proposal_id]
+
+        if source_section:
+            query += " AND source_section = ?"
+            params.append(source_section)
+        if obligation_level:
+            query += " AND obligation_level = ?"
+            params.append(obligation_level)
+
+        query += " ORDER BY source_section, requirement_id"
+        rows = conn.execute(query, params).fetchall()
+
+        reqs = []
+        for r in rows:
+            req = dict(r)
+            if req.get("cross_references"):
+                try:
+                    req["cross_references"] = json.loads(req["cross_references"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            reqs.append(req)
+
+        return {
+            "proposal_id": proposal_id,
+            "count": len(reqs),
+            "filters": {
+                "source_section": source_section,
+                "obligation_level": obligation_level,
+            },
+            "requirements": reqs,
+        }
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # Top-level parse function
 # ---------------------------------------------------------------------------
 
@@ -645,14 +1197,19 @@ def main():
     parser = argparse.ArgumentParser(
         description="Parse solicitation documents for Section L/M and generate compliance matrices."
     )
-    parser.add_argument("--parse", action="store_true", help="Parse a solicitation file")
+    parser.add_argument("--parse", action="store_true", help="Parse a solicitation file (Section L/M only)")
+    parser.add_argument("--shred", action="store_true", help="Deep-extract ALL requirements from solicitation")
+    parser.add_argument("--get-shredded", action="store_true", help="Retrieve shredded requirements")
     parser.add_argument("--file", help="Path to solicitation document (PDF, DOCX, TXT)")
     parser.add_argument("--text", help="Raw text to parse directly")
     parser.add_argument("--matrix", action="store_true", help="Generate compliance matrix from parsed data")
+    parser.add_argument("--matrix-from-shredded", action="store_true", help="Generate compliance matrix from shredded requirements")
     parser.add_argument("--get-matrix", action="store_true", help="Retrieve compliance matrix")
     parser.add_argument("--update-status", help="Matrix entry ID to update status")
     parser.add_argument("--status", help="New compliance status")
     parser.add_argument("--notes", help="Notes for status update")
+    parser.add_argument("--source-section", help="Filter by source section (section_c, section_f, etc.)")
+    parser.add_argument("--obligation", help="Filter by obligation level (shall, must, will, etc.)")
     parser.add_argument("--proposal-id", help="Proposal ID")
     parser.add_argument("--json", action="store_true", help="JSON output")
     args = parser.parse_args()
@@ -661,6 +1218,55 @@ def main():
 
     if args.text:
         result = parse_text(args.text)
+    elif args.shred and args.file:
+        result = shred_solicitation(args.file, proposal_id=args.proposal_id)
+    elif args.get_shredded and args.proposal_id:
+        result = get_shredded_requirements(
+            args.proposal_id,
+            source_section=args.source_section,
+            obligation_level=args.obligation,
+        )
+    elif args.matrix_from_shredded and args.proposal_id:
+        # Generate compliance matrix from shredded requirements
+        shredded = get_shredded_requirements(args.proposal_id)
+        reqs = shredded.get("requirements", [])
+        conn = _get_db()
+        try:
+            entries = []
+            for req in reqs:
+                entry_id = _uid()
+                # Map source_section to compliance_matrix source
+                source_map = {
+                    "section_c": "sow",
+                    "section_f": "other",
+                    "section_h": "other",
+                    "section_j": "other",
+                    "section_l": "section_l",
+                    "section_m": "section_m",
+                }
+                source = source_map.get(req.get("source_section"), "other")
+                conn.execute(
+                    "INSERT INTO compliance_matrices "
+                    "(id, proposal_id, requirement_id, requirement_text, source, "
+                    "compliance_status, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, 'not_addressed', ?)",
+                    (entry_id, args.proposal_id, req.get("requirement_id", _uid()[:6]),
+                     req["requirement_text"], source, _now()),
+                )
+                entries.append({
+                    "id": entry_id,
+                    "requirement_id": req.get("requirement_id"),
+                    "source": source,
+                    "requirement_text": req["requirement_text"][:100],
+                })
+            _audit(conn, "compliance.matrix_from_shredded",
+                   f"Generated matrix from {len(entries)} shredded requirements",
+                   "proposal", args.proposal_id,
+                   json.dumps({"total": len(entries)}))
+            conn.commit()
+        finally:
+            conn.close()
+        result = {"proposal_id": args.proposal_id, "entries_created": len(entries), "entries": entries}
     elif args.parse and args.file:
         result = parse_solicitation(args.file, proposal_id=args.proposal_id)
     elif args.matrix and args.proposal_id:
@@ -695,7 +1301,26 @@ def main():
         if "error" in result:
             print(f"ERROR: {result['error']}", file=sys.stderr)
             sys.exit(1)
-        if "sections_l" in result:
+        if "shredded_at" in result:
+            print(f"Solicitation Shredder Results:")
+            print(f"  Total requirements: {result['total_requirements']}")
+            print(f"  Cross-references: {result['total_cross_references']}")
+            print(f"\n  By section:")
+            for sec, cnt in result.get("section_counts", {}).items():
+                print(f"    {sec}: {cnt}")
+            print(f"\n  By obligation:")
+            for obl, cnt in result.get("obligation_counts", {}).items():
+                print(f"    {obl}: {cnt}")
+            print(f"\n  Requirements:")
+            for req in result.get("requirements", [])[:20]:
+                obl = req.get("obligation_level", "?")
+                src = req.get("source_section", "?")
+                xrefs = req.get("cross_references") or []
+                xref_str = f" [{len(xrefs)} xrefs]" if xrefs else ""
+                print(f"    [{src}|{obl}] {req['requirement_text'][:90]}{xref_str}")
+            if result["total_requirements"] > 20:
+                print(f"    ... and {result['total_requirements'] - 20} more")
+        elif "sections_l" in result:
             print(f"Section L instructions: {len(result['sections_l'])}")
             for item in result["sections_l"]:
                 print(f"  [{item['id']}] {item['instruction_text'][:100]}")

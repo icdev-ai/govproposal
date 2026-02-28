@@ -45,6 +45,17 @@ try:
 except ImportError:
     yaml = None
 
+# Optional python-docx import for Word export
+try:
+    import docx as python_docx  # type: ignore
+    from docx.shared import Inches, Pt, Cm, RGBColor  # type: ignore
+    from docx.enum.text import WD_ALIGN_PARAGRAPH  # type: ignore
+    from docx.enum.table import WD_TABLE_ALIGNMENT  # type: ignore
+    from docx.enum.section import WD_ORIENT  # type: ignore
+    HAS_DOCX = True
+except ImportError:
+    HAS_DOCX = False
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -916,6 +927,386 @@ def get_package_status(proposal_id, db_path=None):
 
 
 # ---------------------------------------------------------------------------
+# Word (.docx) Export
+# ---------------------------------------------------------------------------
+
+def _configure_docx_styles(doc, classification):
+    """Configure Word document styles for DoD proposal formatting.
+
+    Sets up Heading 1/2/3 styles, Normal text, and header/footer
+    with classification banners.
+    """
+    style = doc.styles["Normal"]
+    font = style.font
+    font.name = "Times New Roman"
+    font.size = Pt(12)
+    style.paragraph_format.space_after = Pt(6)
+    style.paragraph_format.line_spacing = 1.15
+
+    # Heading styles
+    for level, size in [(1, 16), (2, 14), (3, 12)]:
+        heading_style = doc.styles[f"Heading {level}"]
+        heading_style.font.name = "Times New Roman"
+        heading_style.font.size = Pt(size)
+        heading_style.font.bold = True
+        heading_style.font.color.rgb = RGBColor(0, 0, 0)
+        heading_style.paragraph_format.space_before = Pt(12)
+        heading_style.paragraph_format.space_after = Pt(6)
+
+    # Set margins (1 inch all sides — standard DoD)
+    for section in doc.sections:
+        section.top_margin = Inches(1)
+        section.bottom_margin = Inches(1)
+        section.left_margin = Inches(1)
+        section.right_margin = Inches(1)
+
+        # Header with classification banner
+        header = section.header
+        header.is_linked_to_previous = False
+        hp = header.paragraphs[0] if header.paragraphs else header.add_paragraph()
+        hp.text = classification
+        hp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        hp.style.font.size = Pt(10)
+        hp.style.font.bold = True
+        hp.style.font.color.rgb = RGBColor(128, 0, 0)
+
+        # Footer with classification + page number
+        footer = section.footer
+        footer.is_linked_to_previous = False
+        fp = footer.paragraphs[0] if footer.paragraphs else footer.add_paragraph()
+        fp.text = classification
+        fp.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        fp.style.font.size = Pt(10)
+        fp.style.font.bold = True
+        fp.style.font.color.rgb = RGBColor(128, 0, 0)
+
+
+def _write_volume_docx(proposal, vol_name, vol_sections, output_path,
+                        classification, sol_num, template_path=None):
+    """Write a single volume as a formatted Word (.docx) document.
+
+    Args:
+        proposal: Proposal dict.
+        vol_name: Volume name (technical, management, etc.).
+        vol_sections: List of section dicts for this volume.
+        output_path: Path to write the .docx file.
+        classification: Classification marking string.
+        sol_num: Solicitation number.
+        template_path: Optional custom .docx template path.
+    """
+    if not HAS_DOCX:
+        raise ImportError(
+            "python-docx is required for Word export. "
+            "Install with: pip install python-docx"
+        )
+
+    # Create document from template or blank
+    if template_path and Path(template_path).exists():
+        doc = python_docx.Document(str(template_path))
+    else:
+        doc = python_docx.Document()
+
+    _configure_docx_styles(doc, classification)
+
+    # --- Title Page ---
+    doc.add_paragraph("")  # Spacer
+    doc.add_paragraph("")
+    title_para = doc.add_paragraph()
+    title_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = title_para.add_run(proposal.get("title", "PROPOSAL"))
+    run.font.size = Pt(24)
+    run.font.bold = True
+
+    doc.add_paragraph("")
+    vol_para = doc.add_paragraph()
+    vol_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = vol_para.add_run(f"Volume: {vol_name.upper().replace('_', ' ')}")
+    run.font.size = Pt(18)
+    run.font.bold = True
+
+    if sol_num:
+        doc.add_paragraph("")
+        sol_para = doc.add_paragraph()
+        sol_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        run = sol_para.add_run(f"Solicitation: {sol_num}")
+        run.font.size = Pt(14)
+
+    doc.add_paragraph("")
+    class_para = doc.add_paragraph()
+    class_para.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = class_para.add_run(classification)
+    run.font.size = Pt(12)
+    run.font.bold = True
+    run.font.color.rgb = RGBColor(128, 0, 0)
+
+    # Page break after title
+    doc.add_page_break()
+
+    # --- Table of Contents ---
+    doc.add_heading("Table of Contents", level=1)
+    for s in vol_sections:
+        toc_para = doc.add_paragraph()
+        toc_para.paragraph_format.space_after = Pt(2)
+        run = toc_para.add_run(
+            f"{s['section_number']}    {s['section_title']}"
+        )
+        run.font.size = Pt(11)
+
+    doc.add_page_break()
+
+    # --- Section Content ---
+    for s in vol_sections:
+        doc.add_heading(
+            f"{s['section_number']} {s['section_title']}",
+            level=1,
+        )
+
+        content = s.get("content") or "[CONTENT MISSING]"
+
+        # Split content into paragraphs and add them
+        for para_text in content.split("\n"):
+            para_text = para_text.strip()
+            if not para_text:
+                doc.add_paragraph("")
+                continue
+
+            # Detect sub-headings (lines that are all caps or end with colon)
+            if (para_text.isupper() and len(para_text) < 100) or \
+               (para_text.endswith(":") and len(para_text) < 80):
+                doc.add_heading(para_text, level=2)
+            else:
+                doc.add_paragraph(para_text)
+
+    # Save
+    doc.save(str(output_path))
+
+
+def _write_acronym_table_docx(acronym_list, output_path, classification):
+    """Write acronym list as a formatted Word table.
+
+    Args:
+        acronym_list: List of dicts with 'acronym' and 'expansion'.
+        output_path: Path to write the .docx file.
+        classification: Classification marking string.
+    """
+    if not HAS_DOCX:
+        raise ImportError("python-docx required for Word export")
+
+    doc = python_docx.Document()
+    _configure_docx_styles(doc, classification)
+
+    doc.add_heading("Acronym List", level=1)
+
+    if acronym_list:
+        table = doc.add_table(rows=1, cols=2)
+        table.style = "Table Grid"
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+
+        # Header row
+        hdr_cells = table.rows[0].cells
+        hdr_cells[0].text = "Acronym"
+        hdr_cells[1].text = "Expansion"
+        for cell in hdr_cells:
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.bold = True
+
+        # Data rows
+        for acr in sorted(acronym_list, key=lambda x: x.get("acronym", "")):
+            row_cells = table.add_row().cells
+            row_cells[0].text = acr.get("acronym", "")
+            row_cells[1].text = acr.get("expansion", "")
+
+    doc.save(str(output_path))
+
+
+def _write_compliance_matrix_docx(matrix_entries, output_path, classification):
+    """Write compliance matrix as a formatted Word table.
+
+    Args:
+        matrix_entries: List of compliance matrix entry dicts.
+        output_path: Path to write the .docx file.
+        classification: Classification marking string.
+    """
+    if not HAS_DOCX:
+        raise ImportError("python-docx required for Word export")
+
+    doc = python_docx.Document()
+    _configure_docx_styles(doc, classification)
+
+    doc.add_heading("Compliance Matrix", level=1)
+
+    if matrix_entries:
+        table = doc.add_table(rows=1, cols=5)
+        table.style = "Table Grid"
+
+        # Header
+        headers = ["Req ID", "Source", "Requirement", "Status", "Volume/Section"]
+        for i, hdr in enumerate(headers):
+            table.rows[0].cells[i].text = hdr
+            for paragraph in table.rows[0].cells[i].paragraphs:
+                for run in paragraph.runs:
+                    run.font.bold = True
+                    run.font.size = Pt(9)
+
+        # Data rows
+        for entry in matrix_entries:
+            row = table.add_row().cells
+            row[0].text = entry.get("requirement_id", "")
+            row[1].text = entry.get("source", "")
+            row[2].text = (entry.get("requirement_text", ""))[:150]
+            row[3].text = entry.get("compliance_status", "not_addressed")
+            sec_info = entry.get("section_number") or ""
+            if entry.get("volume"):
+                sec_info = f"{entry['volume']}/{sec_info}" if sec_info else entry["volume"]
+            row[4].text = sec_info
+
+            for cell in row:
+                for paragraph in cell.paragraphs:
+                    for run in paragraph.runs:
+                        run.font.size = Pt(8)
+
+    doc.save(str(output_path))
+
+
+def package_proposal_docx(proposal_id, output_dir, template_path=None,
+                           db_path=None):
+    """Package proposal as formatted Word (.docx) documents.
+
+    Produces one .docx file per volume, plus acronym list and compliance
+    matrix as separate Word documents.
+
+    Args:
+        proposal_id: Proposal ID.
+        output_dir: Directory to write .docx files.
+        template_path: Optional custom .docx template.
+        db_path: Override database path.
+
+    Returns:
+        dict with file manifest and packaging status.
+    """
+    if not HAS_DOCX:
+        return {"error": "python-docx not installed. Run: pip install python-docx"}
+
+    conn = _get_db(db_path)
+    try:
+        proposal = _load_proposal(conn, proposal_id)
+        sections = _load_sections(conn, proposal_id)
+        if not sections:
+            raise ValueError(f"No sections found for proposal {proposal_id}")
+
+        classification = proposal.get("classification") or "CUI // SP-PROPIN"
+        opp_id = proposal.get("opportunity_id") or "UNKNOWN"
+        sol_num = ""
+        if opp_id != "UNKNOWN":
+            opp_row = conn.execute(
+                "SELECT solicitation_number FROM opportunities WHERE id = ?",
+                (opp_id,),
+            ).fetchone()
+            if opp_row:
+                sol_num = opp_row["solicitation_number"] or ""
+
+        out_path = Path(output_dir)
+        out_path.mkdir(parents=True, exist_ok=True)
+
+        sol_slug = _safe_filename(sol_num) if sol_num else "proposal"
+        files_written = []
+
+        # Group sections by volume
+        volumes_defined = _parse_json_field(proposal.get("volumes")) or [
+            "technical", "management", "past_performance", "cost"
+        ]
+        volume_sections = {}
+        for s in sections:
+            vol = s.get("volume", "technical")
+            volume_sections.setdefault(vol, []).append(s)
+
+        # Write each volume as a .docx
+        for vol_name in volumes_defined:
+            vol_secs = volume_sections.get(vol_name, [])
+            if not vol_secs:
+                continue
+
+            filename = f"{sol_slug}_vol_{vol_name}.docx"
+            filepath = out_path / filename
+
+            _write_volume_docx(
+                proposal, vol_name, vol_secs, filepath,
+                classification, sol_num, template_path=template_path,
+            )
+
+            files_written.append({
+                "filename": filename,
+                "volume": vol_name,
+                "sections": len(vol_secs),
+                "size_bytes": filepath.stat().st_size,
+                "format": "docx",
+                "path": str(filepath),
+            })
+
+        # Write acronym list as Word table
+        acronyms = generate_acronym_list(proposal_id, db_path=db_path)
+        if acronyms.get("acronyms"):
+            acr_filename = f"{sol_slug}_acronyms.docx"
+            acr_path = out_path / acr_filename
+            _write_acronym_table_docx(
+                acronyms["acronyms"], acr_path, classification,
+            )
+            files_written.append({
+                "filename": acr_filename,
+                "volume": "attachments",
+                "sections": 0,
+                "size_bytes": acr_path.stat().st_size,
+                "format": "docx",
+                "path": str(acr_path),
+            })
+
+        # Write compliance matrix as Word table
+        matrix_rows = conn.execute(
+            "SELECT * FROM compliance_matrices WHERE proposal_id = ? "
+            "ORDER BY source, requirement_id",
+            (proposal_id,),
+        ).fetchall()
+        if matrix_rows:
+            matrix_entries = [dict(r) for r in matrix_rows]
+            mx_filename = f"{sol_slug}_compliance_matrix.docx"
+            mx_path = out_path / mx_filename
+            _write_compliance_matrix_docx(
+                matrix_entries, mx_path, classification,
+            )
+            files_written.append({
+                "filename": mx_filename,
+                "volume": "attachments",
+                "sections": 0,
+                "size_bytes": mx_path.stat().st_size,
+                "format": "docx",
+                "path": str(mx_path),
+            })
+
+        result = {
+            "proposal_id": proposal_id,
+            "package_id": _pkg_id(),
+            "output_format": "docx",
+            "output_dir": str(out_path),
+            "files": files_written,
+            "total_files": len(files_written),
+            "total_size_bytes": sum(f["size_bytes"] for f in files_written),
+            "acronym_count": len(acronyms.get("acronyms", [])),
+            "compliance_matrix_entries": len(matrix_rows) if matrix_rows else 0,
+            "packaged_at": _now(),
+        }
+
+        _audit(conn, "production.package_docx",
+               f"Packaged proposal {proposal_id} as DOCX",
+               "proposal", proposal_id,
+               {"files": len(files_written), "format": "docx"})
+        conn.commit()
+        return result
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -929,6 +1320,10 @@ def _build_parser():
             "Examples:\n"
             "  %(prog)s --package --proposal-id PROP-001 "
             "--output /tmp/out --json\n"
+            "  %(prog)s --package --proposal-id PROP-001 "
+            "--output /tmp/out --format docx --json\n"
+            "  %(prog)s --package --proposal-id PROP-001 "
+            "--output /tmp/out --format docx --template custom.docx\n"
             "  %(prog)s --validate --proposal-id PROP-001 --json\n"
             "  %(prog)s --acronyms --proposal-id PROP-001 --json\n"
             "  %(prog)s --cross-refs --proposal-id PROP-001 --json\n"
@@ -950,6 +1345,10 @@ def _build_parser():
 
     parser.add_argument("--proposal-id", help="Proposal ID")
     parser.add_argument("--output", help="Output directory (for --package)")
+    parser.add_argument("--format", choices=["txt", "docx"], default="txt",
+                        help="Output format (default: txt)")
+    parser.add_argument("--template",
+                        help="Custom .docx template path (for --format docx)")
     parser.add_argument("--json", action="store_true", help="JSON output")
     parser.add_argument("--db-path", help="Override database path")
 
@@ -969,9 +1368,15 @@ def main():
         if args.package:
             if not args.output:
                 parser.error("--package requires --output")
-            result = package_proposal(
-                args.proposal_id, args.output, db_path=db
-            )
+            if args.format == "docx":
+                result = package_proposal_docx(
+                    args.proposal_id, args.output,
+                    template_path=args.template, db_path=db,
+                )
+            else:
+                result = package_proposal(
+                    args.proposal_id, args.output, db_path=db
+                )
 
         elif args.validate:
             result = validate_submission(args.proposal_id, db_path=db)

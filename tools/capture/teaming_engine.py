@@ -12,12 +12,19 @@ that fill those gaps.  Partners are scored on capability match, clearance
 compatibility, contract vehicle access, past collaboration history, and
 relationship strength.
 
+SAM.gov Entity Search: Queries the SAM.gov Entity Management API to
+discover potential teaming partners matching capability gaps, NAICS codes,
+and set-aside requirements.  Requires SAM_GOV_API_KEY env var.
+
 Usage:
     python tools/capture/teaming_engine.py --find --opp-id OPP-abc123 --json
     python tools/capture/teaming_engine.py --add --company-name "Acme Corp" --capabilities "cloud,DevSecOps" --json
     python tools/capture/teaming_engine.py --get --partner-id TP-abc123 --json
     python tools/capture/teaming_engine.py --list [--capability cloud] [--limit 20] --json
     python tools/capture/teaming_engine.py --gap-analysis --opp-id OPP-abc123 --json
+    python tools/capture/teaming_engine.py --discover --opp-id OPP-abc123 --json
+    python tools/capture/teaming_engine.py --sam-search --keywords "cloud,DevSecOps" --naics 541512 --json
+    python tools/capture/teaming_engine.py --import-entity --uei ABCDE12345 --json
 """
 
 import json
@@ -34,11 +41,19 @@ DB_PATH = Path(os.environ.get(
     "GOVPROPOSAL_DB_PATH", str(BASE_DIR / "data" / "govproposal.db")
 ))
 
-# Optional YAML import
+# Optional imports
 try:
     import yaml  # noqa: F401
 except ImportError:
     yaml = None
+
+try:
+    import requests as _requests
+except ImportError:
+    _requests = None
+
+SAM_GOV_API_KEY = os.environ.get("SAM_GOV_API_KEY", "")
+SAM_ENTITY_API_URL = "https://api.sam.gov/entity-information/v3/entities"
 
 
 # ---------------------------------------------------------------------------
@@ -562,6 +577,386 @@ def gap_analysis(opp_id, db_path=None):
 
 
 # ---------------------------------------------------------------------------
+# SAM.gov Entity Search
+# ---------------------------------------------------------------------------
+
+def search_sam_entities(keywords=None, naics_codes=None, set_aside=None,
+                        state=None, limit=25):
+    """Search SAM.gov Entity Management API for potential partners.
+
+    Queries the public SAM.gov Entity API to find registered entities
+    matching the given criteria.  Requires SAM_GOV_API_KEY environment
+    variable (free registration at sam.gov).
+
+    Args:
+        keywords: List or comma-separated capability keywords.
+        naics_codes: List or comma-separated NAICS codes.
+        set_aside: Set-aside type filter (e.g. 'SBA', '8A', 'SDVOSB',
+            'HUBZ', 'WOSB').
+        state: US state abbreviation (e.g. 'VA', 'MD').
+        limit: Max results (default 25, max 100).
+
+    Returns:
+        dict with entities list and metadata.
+    """
+    if not SAM_GOV_API_KEY:
+        return {
+            "status": "no_api_key",
+            "message": (
+                "SAM_GOV_API_KEY not set.  Register for a free API key "
+                "at https://sam.gov/content/entity-information and set "
+                "the SAM_GOV_API_KEY environment variable."
+            ),
+            "entities": [],
+        }
+
+    if _requests is None:
+        return {
+            "status": "missing_dependency",
+            "message": "requests library required. Install with: pip install requests",
+            "entities": [],
+        }
+
+    # Build query parameters
+    params = {
+        "api_key": SAM_GOV_API_KEY,
+        "registrationStatus": "A",  # Active registrations only
+        "purposeOfRegistrationCode": "Z2",  # Government business
+        "includeSections": "entityRegistration,coreData",
+        "page": 0,
+        "size": min(int(limit), 100),
+    }
+
+    if keywords:
+        if isinstance(keywords, str):
+            keywords = [k.strip() for k in keywords.split(",") if k.strip()]
+        # SAM API uses q parameter for keyword search
+        params["q"] = " ".join(keywords[:5])
+
+    if naics_codes:
+        if isinstance(naics_codes, str):
+            naics_codes = [n.strip() for n in naics_codes.split(",")
+                           if n.strip()]
+        params["naicsCode"] = naics_codes[0]  # API accepts single NAICS
+
+    if set_aside:
+        # Map common abbreviations to SAM API business type codes
+        set_aside_map = {
+            "SBA": "2X",
+            "8A": "A6",
+            "SDVOSB": "QF",
+            "HUBZ": "A2",
+            "WOSB": "A5",
+            "EDWOSB": "XX",
+        }
+        code = set_aside_map.get(set_aside.upper(), set_aside)
+        params["businessTypeCode"] = code
+
+    if state:
+        params["physicalAddressProvinceOrStateCode"] = state.upper()
+
+    try:
+        resp = _requests.get(SAM_ENTITY_API_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except _requests.exceptions.RequestException as exc:
+        err_msg = str(exc)
+        if SAM_GOV_API_KEY and SAM_GOV_API_KEY in err_msg:
+            err_msg = err_msg.replace(SAM_GOV_API_KEY, "***REDACTED***")
+        return {
+            "status": "api_error",
+            "message": f"SAM.gov API error: {err_msg}",
+            "entities": [],
+        }
+
+    # Parse response into simplified entity records
+    entities = []
+    for entity_data in data.get("entityData", []):
+        reg = entity_data.get("entityRegistration", {})
+        core = entity_data.get("coreData", {})
+        general = core.get("generalInformation", {})
+        phys_addr = core.get("physicalAddress", {})
+
+        entity = {
+            "uei": reg.get("ueiSAM", ""),
+            "cage_code": reg.get("cageCode", ""),
+            "legal_name": reg.get("legalBusinessName", ""),
+            "dba_name": reg.get("dbaName", ""),
+            "registration_status": reg.get("registrationStatus", ""),
+            "purpose_of_registration": reg.get(
+                "purposeOfRegistrationDesc", ""
+            ),
+            "naics_codes": [
+                n.get("naicsCode", "")
+                for n in core.get("federalHierarchy", {}).get(
+                    "naicsList", []
+                )
+            ] if core.get("federalHierarchy") else [],
+            "business_types": [
+                bt.get("businessTypeDesc", "")
+                for bt in general.get("businessTypes", [])
+            ] if general.get("businessTypes") else [],
+            "city": phys_addr.get("city", ""),
+            "state": phys_addr.get("stateOrProvinceCode", ""),
+            "country": phys_addr.get("countryCode", "US"),
+            "sam_profile_url": (
+                f"https://sam.gov/entity/{reg.get('ueiSAM', '')}/coreData"
+                if reg.get("ueiSAM") else ""
+            ),
+        }
+        entities.append(entity)
+
+    return {
+        "status": "success",
+        "query": {
+            "keywords": keywords,
+            "naics_codes": naics_codes,
+            "set_aside": set_aside,
+            "state": state,
+        },
+        "total_records": data.get("totalRecords", len(entities)),
+        "entities": entities,
+    }
+
+
+def discover_partners(opp_id, db_path=None, limit=15):
+    """Discover potential teaming partners from SAM.gov for an opportunity.
+
+    Runs gap_analysis to find capability gaps, then queries SAM.gov for
+    entities matching the gap keywords, opportunity NAICS, and required
+    set-aside type.  Discovered entities are scored on capability match,
+    set-aside match, and registration status.
+
+    Args:
+        opp_id: Opportunity ID to discover partners for.
+        db_path: Optional database path override.
+        limit: Max entities to return (default 15).
+
+    Returns:
+        dict with gap analysis, SAM.gov results, and scored recommendations.
+    """
+    conn = _get_db(db_path)
+    try:
+        opp = _load_opportunity(conn, opp_id)
+
+        # Run gap analysis
+        opp_text = " ".join(filter(None, [
+            opp.get("title"), opp.get("description"), opp.get("full_text"),
+        ]))
+        opp_keywords = _extract_keywords(opp_text)
+        company_keywords = _load_company_capabilities(conn)
+        gaps = _identify_gaps(opp_keywords, company_keywords)
+
+        # Extract search parameters from opportunity
+        naics = opp.get("naics_code")
+        set_aside = opp.get("set_aside_type")
+
+        # Use top gap keywords as search terms
+        gap_search = sorted(gaps)[:10]
+
+        # Query SAM.gov
+        sam_results = search_sam_entities(
+            keywords=gap_search,
+            naics_codes=naics,
+            set_aside=set_aside,
+            limit=limit,
+        )
+
+        if sam_results.get("status") != "success":
+            # Return what we have even without SAM.gov
+            _audit(conn, "capture.discover_partners",
+                   f"Discovery for {opp_id} — SAM.gov unavailable: "
+                   f"{sam_results.get('message', 'unknown')}",
+                   "opportunity", opp_id,
+                   {"status": sam_results.get("status")})
+            conn.commit()
+            return {
+                "opportunity_id": opp_id,
+                "gap_keywords": sorted(gaps)[:30],
+                "sam_status": sam_results.get("status"),
+                "sam_message": sam_results.get("message"),
+                "discovered_entities": [],
+                "recommendation": (
+                    "SAM.gov search unavailable.  Use --find to search "
+                    "existing teaming partners or set SAM_GOV_API_KEY."
+                ),
+            }
+
+        # Score discovered entities
+        scored_entities = []
+        for entity in sam_results.get("entities", []):
+            # Capability match: overlap between entity NAICS/name and gaps
+            entity_keywords = _extract_keywords(
+                entity.get("legal_name", "")
+            )
+            for nc in entity.get("naics_codes", []):
+                entity_keywords.add(nc)
+            cap_overlap = gaps & entity_keywords
+            cap_score = len(cap_overlap) / max(len(gaps), 1) if gaps else 0.5
+
+            # Set-aside match
+            sa_score = 0.5
+            if set_aside and entity.get("business_types"):
+                sa_lower = set_aside.lower()
+                bt_text = " ".join(
+                    bt.lower() for bt in entity["business_types"]
+                )
+                if sa_lower in bt_text:
+                    sa_score = 1.0
+
+            # Registration status
+            reg_score = 1.0 if entity.get(
+                "registration_status"
+            ) == "Active" else 0.3
+
+            overall = round(
+                cap_score * 0.50 + sa_score * 0.30 + reg_score * 0.20,
+                3,
+            )
+            scored_entities.append({
+                **entity,
+                "scores": {
+                    "capability_match": round(cap_score, 3),
+                    "set_aside_match": round(sa_score, 3),
+                    "registration_status": round(reg_score, 3),
+                    "overall": overall,
+                },
+            })
+
+        # Sort by overall score
+        scored_entities.sort(
+            key=lambda x: x["scores"]["overall"], reverse=True
+        )
+
+        result = {
+            "opportunity_id": opp_id,
+            "opportunity_title": opp.get("title"),
+            "gap_keywords": sorted(gaps)[:30],
+            "gap_count": len(gaps),
+            "sam_status": "success",
+            "total_found": sam_results.get("total_records", 0),
+            "discovered_entities": scored_entities[:limit],
+        }
+
+        _audit(conn, "capture.discover_partners",
+               f"Discovered {len(scored_entities)} SAM.gov entities "
+               f"for {opp_id}",
+               "opportunity", opp_id,
+               {"gap_count": len(gaps),
+                "entities_found": len(scored_entities)})
+        conn.commit()
+        return result
+    finally:
+        conn.close()
+
+
+def import_sam_entity(uei, db_path=None):
+    """Import a SAM.gov entity as a teaming partner.
+
+    Queries SAM.gov for the entity by UEI (Unique Entity Identifier),
+    then creates a teaming_partners record with the entity data.
+
+    Args:
+        uei: SAM.gov Unique Entity Identifier (UEI).
+        db_path: Optional database path override.
+
+    Returns:
+        dict with created partner record, or error if entity not found.
+    """
+    # Search SAM.gov by UEI
+    if not SAM_GOV_API_KEY:
+        return {
+            "error": "SAM_GOV_API_KEY not set",
+            "message": (
+                "Register at https://sam.gov/content/entity-information "
+                "for a free API key."
+            ),
+        }
+
+    if _requests is None:
+        return {
+            "error": "requests library required",
+            "message": "Install with: pip install requests",
+        }
+
+    params = {
+        "api_key": SAM_GOV_API_KEY,
+        "ueiSAM": uei,
+        "includeSections": "entityRegistration,coreData",
+    }
+
+    try:
+        resp = _requests.get(SAM_ENTITY_API_URL, params=params, timeout=30)
+        resp.raise_for_status()
+        data = resp.json()
+    except _requests.exceptions.RequestException as exc:
+        err_msg = str(exc)
+        if SAM_GOV_API_KEY and SAM_GOV_API_KEY in err_msg:
+            err_msg = err_msg.replace(SAM_GOV_API_KEY, "***REDACTED***")
+        return {"error": f"SAM.gov API error: {err_msg}"}
+
+    entities = data.get("entityData", [])
+    if not entities:
+        return {"error": f"No entity found for UEI: {uei}"}
+
+    entity = entities[0]
+    reg = entity.get("entityRegistration", {})
+    core = entity.get("coreData", {})
+    general = core.get("generalInformation", {})
+
+    # Extract fields
+    legal_name = reg.get("legalBusinessName", uei)
+    cage_code = reg.get("cageCode")
+    naics_list = [
+        n.get("naicsCode", "")
+        for n in core.get("federalHierarchy", {}).get("naicsList", [])
+    ] if core.get("federalHierarchy") else []
+
+    business_types = [
+        bt.get("businessTypeDesc", "")
+        for bt in general.get("businessTypes", [])
+    ] if general.get("businessTypes") else []
+
+    # Determine set-aside from business types
+    set_aside = None
+    for bt in business_types:
+        bt_lower = bt.lower()
+        if "8(a)" in bt_lower:
+            set_aside = "8a"
+            break
+        if "service-disabled" in bt_lower:
+            set_aside = "SDVOSB"
+            break
+        if "hubzone" in bt_lower:
+            set_aside = "HUBZone"
+            break
+        if "woman-owned" in bt_lower:
+            set_aside = "WOSB"
+            break
+
+    # Create teaming partner
+    result = add_partner(
+        company_name=legal_name,
+        capabilities=", ".join(business_types[:5]),
+        db_path=db_path,
+        cage_code=cage_code,
+        duns_number=uei,  # UEI replaces DUNS
+        naics_codes=",".join(naics_list),
+        set_aside_status=set_aside,
+        notes=f"Imported from SAM.gov (UEI: {uei})",
+    )
+
+    result["sam_source"] = {
+        "uei": uei,
+        "legal_name": legal_name,
+        "cage_code": cage_code,
+        "naics_codes": naics_list,
+        "business_types": business_types,
+    }
+    return result
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -579,6 +974,10 @@ def _build_parser():
             "  %(prog)s --get --partner-id TP-abc123 --json\n"
             "  %(prog)s --list --capability cloud --limit 10 --json\n"
             "  %(prog)s --gap-analysis --opp-id OPP-abc123 --json\n"
+            "  %(prog)s --discover --opp-id OPP-abc123 --json\n"
+            "  %(prog)s --sam-search --keywords 'cloud,AI' "
+            "--naics 541512 --json\n"
+            "  %(prog)s --import-entity --uei ABCDE12345 --json\n"
         ),
     )
 
@@ -593,8 +992,17 @@ def _build_parser():
                         help="List teaming partners")
     action.add_argument("--gap-analysis", action="store_true",
                         help="Run capability gap analysis")
+    action.add_argument("--discover", action="store_true",
+                        help="Discover partners from SAM.gov for an opp")
+    action.add_argument("--sam-search", action="store_true",
+                        help="Search SAM.gov entities directly")
+    action.add_argument("--import-entity", action="store_true",
+                        help="Import a SAM.gov entity as a teaming partner")
 
     parser.add_argument("--opp-id", help="Opportunity ID")
+    parser.add_argument("--uei", help="SAM.gov Unique Entity Identifier")
+    parser.add_argument("--keywords",
+                        help="Comma-separated search keywords (for --sam-search)")
     parser.add_argument("--partner-id", help="Teaming partner ID")
     parser.add_argument("--company-name", help="Company name (for --add)")
     parser.add_argument("--capabilities",
@@ -673,6 +1081,26 @@ def main():
             if not args.opp_id:
                 parser.error("--gap-analysis requires --opp-id")
             result = gap_analysis(args.opp_id, db_path=db)
+
+        elif args.discover:
+            if not args.opp_id:
+                parser.error("--discover requires --opp-id")
+            result = discover_partners(
+                args.opp_id, db_path=db, limit=args.limit,
+            )
+
+        elif args.sam_search:
+            result = search_sam_entities(
+                keywords=args.keywords,
+                naics_codes=args.naics_codes,
+                set_aside=args.set_aside_status,
+                limit=args.limit,
+            )
+
+        elif args.import_entity:
+            if not args.uei:
+                parser.error("--import-entity requires --uei")
+            result = import_sam_entity(args.uei, db_path=db)
 
         # Output
         if args.json:

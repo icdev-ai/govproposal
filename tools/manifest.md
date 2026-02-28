@@ -17,7 +17,7 @@
 | Tool | Script | Purpose |
 |------|--------|---------|
 | Win Theme Generator | `win_theme_generator.py` | Generate discriminators and win themes from opportunity data |
-| Teaming Engine | `teaming_engine.py` | Suggest teaming partners based on gap analysis |
+| Teaming Engine | `teaming_engine.py` | Suggest teaming partners based on gap analysis; `--discover` for SAM.gov entity search |
 | Black Hat Review | `black_hat_review.py` | Simulated competitor analysis, weakness identification |
 
 ## Customer Intelligence (`tools/capture/`)
@@ -30,7 +30,7 @@
 
 | Tool | Script | Purpose |
 |------|--------|---------|
-| Section Parser | `section_parser.py` | Parse Section L/M from solicitation PDFs |
+| Section Parser | `section_parser.py` | Parse Section L/M from solicitation PDFs; `--shred` mode extracts ALL sections (C/F/H/J/L/M) |
 | Compliance Matrix | `compliance_matrix.py` | Auto-generate compliance traceability matrix |
 | Content Drafter | `content_drafter.py` | AI-drafted proposal sections with RAG retrieval |
 | Proposal Assembler | `proposal_assembler.py` | Assemble complete proposal from drafted sections |
@@ -48,7 +48,7 @@
 | Template Engine | `template_engine.py` | Document templates per agency format |
 | Formatter | `formatter.py` | Auto-formatting (fonts, margins, page limits) |
 | Cross-Ref Validator | `cross_ref_validator.py` | Cross-reference and acronym validation |
-| Submission Packager | `submission_packager.py` | Package proposal for submission with checklists |
+| Submission Packager | `submission_packager.py` | Package proposal for submission with checklists; `--format docx` for Word export |
 
 ## Knowledge Base (`tools/knowledge/`)
 
@@ -66,6 +66,7 @@
 | Debrief Capture | `debrief_capture.py` | Capture post-submission debrief data |
 | Win/Loss Analyzer | `win_loss_analyzer.py` | Pattern analysis across win/loss outcomes |
 | Pricing Calibrator | `pricing_calibrator.py` | Calibrate pricing from actual award data |
+| Analytics Engine | `analytics_engine.py` | Unified win-rate analytics with multi-dimensional FPDS correlation |
 
 ## Classification Aggregation Guard (`tools/cag/`)
 

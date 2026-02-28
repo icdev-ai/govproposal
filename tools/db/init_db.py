@@ -490,6 +490,34 @@ CREATE TABLE IF NOT EXISTS scg_rules (
 
 CREATE INDEX IF NOT EXISTS idx_scgrule_prog ON scg_rules(program_id);
 
+-- Shredded requirements (deep multi-section extraction)
+CREATE TABLE IF NOT EXISTS shredded_requirements (
+    id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL REFERENCES proposals(id),
+    requirement_id TEXT NOT NULL,
+    requirement_text TEXT NOT NULL,
+    obligation_level TEXT NOT NULL DEFAULT 'unknown'
+        CHECK(obligation_level IN ('shall', 'must', 'will',
+              'should', 'may', 'unknown')),
+    source_section TEXT NOT NULL
+        CHECK(source_section IN ('section_c', 'section_f',
+              'section_h', 'section_j', 'section_l',
+              'section_m', 'other')),
+    cross_references TEXT,
+    compliance_status TEXT NOT NULL DEFAULT 'not_addressed'
+        CHECK(compliance_status IN ('not_addressed',
+              'partially_addressed', 'fully_addressed',
+              'not_applicable')),
+    mapped_section_id TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_shreq_prop ON shredded_requirements(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_shreq_source ON shredded_requirements(source_section);
+CREATE INDEX IF NOT EXISTS idx_shreq_obligation ON shredded_requirements(obligation_level);
+CREATE INDEX IF NOT EXISTS idx_shreq_status ON shredded_requirements(compliance_status);
+
 -- ============================================================
 -- CAPTURE MANAGEMENT
 -- ============================================================

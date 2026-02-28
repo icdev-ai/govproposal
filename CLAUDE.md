@@ -110,6 +110,9 @@ python tools/monitor/opportunity_scorer.py --go-no-go --opp-id "OPP-123" --json 
 # Phase 2: Capture Management
 python tools/capture/win_theme_generator.py --opp-id "OPP-123" --json     # Generate win themes
 python tools/capture/teaming_engine.py --opp-id "OPP-123" --json          # Suggest teaming partners
+python tools/capture/teaming_engine.py --discover --opp-id "OPP-123" --json  # Discover partners via SAM.gov
+python tools/capture/teaming_engine.py --sam-search --keywords "cloud,AI" --naics 541512 --json  # Direct SAM.gov search
+python tools/capture/teaming_engine.py --import-entity --uei ABCDE12345 --json  # Import SAM.gov entity
 python tools/capture/customer_intel.py --agency "DIA" --json               # Customer intelligence
 python tools/capture/black_hat_review.py --opp-id "OPP-123" --json        # Simulated competitor analysis
 
@@ -120,6 +123,9 @@ python tools/knowledge/past_performance.py --list --json
 python tools/knowledge/past_performance.py --search --relevance "cloud migration" --json
 python tools/knowledge/resume_manager.py --search --clearance TS_SCI --skill "Python" --json
 python tools/proposal/section_parser.py --solicitation /path/to/rfp.pdf --json     # Parse Section L/M
+python tools/proposal/section_parser.py --shred /path/to/rfp.pdf --json            # Deep-extract ALL sections (C/F/H/J/L/M)
+python tools/proposal/section_parser.py --get-shredded --proposal-id "PROP-123" --json         # Retrieve shredded reqs
+python tools/proposal/section_parser.py --matrix-from-shredded --proposal-id "PROP-123" --json # Compliance matrix from all sections
 python tools/proposal/compliance_matrix.py --proposal-id "PROP-123" --json         # Auto-generate
 python tools/proposal/content_drafter.py --proposal-id "PROP-123" --section "technical_approach" --json
 python tools/proposal/proposal_assembler.py --proposal-id "PROP-123" --json
@@ -134,12 +140,22 @@ python tools/review/final_qc.py --proposal-id "PROP-123" --json             # Wh
 python tools/production/template_engine.py --proposal-id "PROP-123" --template dod_standard --json
 python tools/production/formatter.py --proposal-id "PROP-123" --json
 python tools/production/cross_ref_validator.py --proposal-id "PROP-123" --json
-python tools/production/submission_packager.py --proposal-id "PROP-123" --output /path --json
+python tools/production/submission_packager.py --package --proposal-id "PROP-123" --output /path --json           # Text output
+python tools/production/submission_packager.py --package --proposal-id "PROP-123" --output /path --format docx --json  # Word output
+python tools/production/submission_packager.py --package --proposal-id "PROP-123" --output /path --format docx --template custom.docx --json
 
 # Phase 6: Learning
 python tools/learning/debrief_capture.py --proposal-id "PROP-123" --result win --json
 python tools/learning/win_loss_analyzer.py --report --json
 python tools/learning/pricing_calibrator.py --analyze --json
+python tools/learning/analytics_engine.py --report --json                  # Full multi-dimensional win-rate analytics
+python tools/learning/analytics_engine.py --by-agency --min-bids 3 --json  # Win rate by agency
+python tools/learning/analytics_engine.py --by-naics --json                # Win rate by NAICS
+python tools/learning/analytics_engine.py --trends --json                  # Win rate trend over fiscal years
+python tools/learning/analytics_engine.py --price-sensitivity --json       # Win rate vs price ratio
+python tools/learning/analytics_engine.py --theme-effectiveness --json     # Win theme effectiveness
+python tools/learning/analytics_engine.py --competitor-impact --json       # Competitor impact on wins
+python tools/learning/analytics_engine.py --team-impact --json             # Team composition impact
 
 # Classification Aggregation Guard (CAG)
 python tools/cag/data_tagger.py --content "..." --json                     # Tag content
@@ -182,7 +198,7 @@ Single SQLite database: `data/govproposal.db`
 
 **Table groups:**
 - Opportunity Intelligence: `opportunities`, `opportunity_scores`, `pipeline_stages`
-- Proposals: `proposals`, `proposal_sections`, `proposal_reviews`, `compliance_matrices`
+- Proposals: `proposals`, `proposal_sections`, `proposal_reviews`, `compliance_matrices`, `shredded_requirements`
 - Knowledge Base: `kb_entries`, `kb_embeddings`, `past_performances`, `resumes`, `capabilities`, `certifications`, `boilerplate`, `win_themes`
 - CAG: `cag_data_tags`, `cag_rules`, `cag_alerts`, `cag_exposure_register`, `scg_rules`, `scg_programs`
 - Competitive: `competitors`, `competitor_wins`, `pricing_history`
