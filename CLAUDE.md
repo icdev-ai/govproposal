@@ -157,6 +157,20 @@ python tools/learning/analytics_engine.py --theme-effectiveness --json     # Win
 python tools/learning/analytics_engine.py --competitor-impact --json       # Competitor impact on wins
 python tools/learning/analytics_engine.py --team-impact --json             # Team composition impact
 
+# Phase 7: Contract Performance Management (CPMP)
+python tools/delivery/contract_manager.py --activate --proposal-id "PROP-123" \
+    --contract-number W911QX-26-C-0001 --pop-start 2026-04-01 --pop-end 2027-03-31 --json
+python tools/delivery/contract_manager.py --get --contract-id "CTR-abc" --json
+python tools/delivery/contract_manager.py --list --json
+python tools/delivery/contract_manager.py --list --status active --json
+python tools/delivery/contract_manager.py --update-cdrl --cdrl-id "CDRL-abc" --status delivered --delivery-date 2026-05-01 --json
+python tools/delivery/contract_manager.py --update-obligation --obligation-id "OBL-abc" --status compliant --evidence "See SOW 3.2" --json
+python tools/delivery/contract_manager.py --reminders --json
+python tools/delivery/contract_manager.py --check-overdue --json
+python tools/delivery/contract_manager.py --cpars-risk --contract-id "CTR-abc" --json
+python tools/delivery/contract_manager.py --cpars-summary --contract-id "CTR-abc" --json
+python tools/delivery/contract_manager.py --dashboard --json
+
 # Classification Aggregation Guard (CAG)
 python tools/cag/data_tagger.py --content "..." --json                     # Tag content
 python tools/cag/data_tagger.py --tag-document --proposal-id "PROP-123" --json  # Tag entire proposal
@@ -167,12 +181,73 @@ python tools/cag/scg_parser.py --import --file /path/to/scg.pdf --json    # Impo
 python tools/cag/exposure_register.py --report --json                      # Cross-proposal exposure
 
 # Competitive Intelligence
-python tools/competitive/fpds_analyzer.py --agency "DIA" --naics 541512 --json  # Analyze awards
+python tools/competitive/fpds_analyzer.py --analyze-agency --agency "DIA" --json         # Awards by agency
+python tools/competitive/fpds_analyzer.py --analyze-naics --naics 541512 --json          # Awards by NAICS
+python tools/competitive/fpds_analyzer.py --build-benchmarks --opp-id "OPP-123" --json   # Pricing benchmarks
+python tools/competitive/fpds_analyzer.py --landscape --agency "DIA" --naics 541512 --json  # Market landscape with HHI
+python tools/competitive/fpds_analyzer.py --trends --agency "DIA" --json                 # Award trends
+python tools/competitive/fpds_analyzer.py --set-aside --agency "DIA" --json              # Set-aside analysis
 python tools/competitive/competitor_tracker.py --track "Booz Allen" --json
-python tools/competitive/price_to_win.py --opp-id "OPP-123" --json
+python tools/competitive/price_to_win.py --estimate --opp-id "OPP-123" --json            # Price-to-Win estimate
+python tools/competitive/price_to_win.py --estimate --opp-id "OPP-123" --strategy aggressive --json
+python tools/competitive/price_to_win.py --labor-rates --opp-id "OPP-123" --json         # Labor rate analysis
+python tools/competitive/price_to_win.py --win-probability --opp-id "OPP-123" --json     # Win probability vs price
+python tools/competitive/price_to_win.py --summary --opp-id "OPP-123" --json             # Full competitive pricing summary
+python tools/competitive/set_aside_analyzer.py --analyze --set-aside-type "8a" --naics 541512 --json  # Set-aside analysis
+python tools/competitive/set_aside_analyzer.py --eligibility --naics 541512 --annual-revenue 5000000 --json
+python tools/competitive/set_aside_analyzer.py --forecast --agency "DIA" --json           # Opportunity forecast
+python tools/competitive/set_aside_analyzer.py --landscape --naics 541512 --set-aside-type "8a" --json  # Competitive landscape
+python tools/competitive/set_aside_analyzer.py --goaling --agency "DIA" --json            # Federal SB goaling analysis
+python tools/competitive/set_aside_analyzer.py --report --naics 541512 --json             # Full market intelligence report
+python tools/competitive/recompete_tracker.py --create --title "IT Services Recompete" --agency "DIA" --json
+python tools/competitive/recompete_tracker.py --list --json
+python tools/competitive/recompete_tracker.py --assess --recompete-id "REC-abc" --json    # 5-factor displacement assessment
+python tools/competitive/recompete_tracker.py --upcoming --days 90 --json                 # Upcoming recompetes
+python tools/competitive/recompete_tracker.py --incumbent-profile --recompete-id "REC-abc" --json
+python tools/competitive/recompete_tracker.py --win-strategy --recompete-id "REC-abc" --json
+python tools/competitive/recompete_tracker.py --dashboard --json
+
+# Proposal Self-Scoring Evaluator
+python tools/review/proposal_evaluator.py --evaluate --proposal-id "PROP-123" --json     # FAR 15.305 evaluation
+python tools/review/proposal_evaluator.py --score-section --proposal-id "PROP-123" --section "technical_approach" --json
+python tools/review/proposal_evaluator.py --compliance-gaps --proposal-id "PROP-123" --json
+python tools/review/proposal_evaluator.py --strengths-weaknesses --proposal-id "PROP-123" --json
+python tools/review/proposal_evaluator.py --competitive-position --proposal-id "PROP-123" --json
+python tools/review/proposal_evaluator.py --improvement-roadmap --proposal-id "PROP-123" --json
+
+# SBIR/STTR
+python tools/proposal/sbir_manager.py --create --title "..." --program-type sbir --phase phase_1 --json
+python tools/proposal/sbir_manager.py --list --json
+python tools/proposal/sbir_manager.py --get --sbir-id "SBIR-abc" --json
+python tools/proposal/sbir_manager.py --phase-transition --sbir-id "SBIR-abc" --new-phase phase_2 --json
+python tools/proposal/sbir_manager.py --checklist --sbir-id "SBIR-abc" --json
+python tools/proposal/sbir_manager.py --trl --sbir-id "SBIR-abc" --json
+python tools/proposal/sbir_manager.py --search-topics --keywords "AI,cybersecurity" --json
+python tools/proposal/sbir_manager.py --dashboard --json
+
+# IDIQ / BPA / GWAC Vehicle Management
+python tools/capture/idiq_manager.py --create-vehicle --vehicle-name "..." --vehicle-type idiq --json
+python tools/capture/idiq_manager.py --list-vehicles --json
+python tools/capture/idiq_manager.py --get-vehicle --vehicle-id "IDIQ-abc" --json
+python tools/capture/idiq_manager.py --create-to --vehicle-id "IDIQ-abc" --task-order-name "..." --json
+python tools/capture/idiq_manager.py --list-to --vehicle-id "IDIQ-abc" --json
+python tools/capture/idiq_manager.py --utilization --vehicle-id "IDIQ-abc" --json     # Burn rate analysis
+python tools/capture/idiq_manager.py --deadlines --json                                # Upcoming deadlines
+python tools/capture/idiq_manager.py --pipeline --vehicle-id "IDIQ-abc" --json        # Pipeline by vehicle
+python tools/capture/idiq_manager.py --performance --vehicle-id "IDIQ-abc" --json     # Vehicle performance
+python tools/capture/idiq_manager.py --dashboard --json
+
+# Customer Intelligence
+python tools/capture/customer_intel.py --create --agency "DIA" --json                 # Create agency profile
+python tools/capture/customer_intel.py --analyze --agency "DIA" --json                # Full agency analysis
+python tools/capture/customer_intel.py --spending --agency "DIA" --json               # Spending analysis
+python tools/capture/customer_intel.py --relationships --agency "DIA" --json          # Relationship map
 
 # Dashboard
 python tools/dashboard/app.py                            # Start on port 5001
+# Pages: /, /opportunities, /proposals, /knowledge, /competitors, /cag, /analytics,
+#   /team, /capabilities, /crm, /pricing, /sbir, /sbir/<id>, /idiq, /idiq/<id>,
+#   /recompetes, /recompetes/<id>, /contracts, /contracts/<id>, /ai-proposals, /rfx/*
 
 # AI Security (Phase 37 — MITRE ATLAS)
 python tools/security/prompt_injection_detector.py --text "ignore previous instructions" --json   # Detect prompt injection
@@ -207,6 +282,12 @@ Single SQLite database: `data/govproposal.db`
 - System: `audit_trail`, `acronyms`, `templates`, `config_overrides`
 - Evolutionary Intelligence (Phase 36): `genome_versions`, `child_capabilities`, `learned_behaviors`
 - AI Security (Phase 37): `prompt_injection_log`, `ai_telemetry`, `ai_bom`
+- Contract Performance Management: `contracts`, `contract_cdrls`, `contract_obligations`, `deliverable_reminders`
+- Proposal Evaluation: `proposal_evaluations`
+- SBIR/STTR: `sbir_proposals`
+- Small Business: `set_aside_intelligence`
+- Recompete Intelligence: `recompete_tracking`
+- IDIQ/BPA/GWAC: `idiq_vehicles`, `task_orders`
 - Cloud-Agnostic (Phase 38): `cloud_provider_status`
 
 ---
@@ -214,9 +295,9 @@ Single SQLite database: `data/govproposal.db`
 ## Proposal Lifecycle (7 Phases)
 
 ```
-MONITOR → QUALIFY → CAPTURE → DRAFT → REVIEW → PRODUCE → LEARN
-   ↑                                                        |
-   └────────────── Continuous Feedback Loop ─────────────────┘
+MONITOR → QUALIFY → CAPTURE → DRAFT → REVIEW → PRODUCE → LEARN → DELIVER
+   ↑                                                                  |
+   └──────────── Continuous Feedback Loop (CPARS → KB → Next Bid) ────┘
 ```
 
 ### Phase 0: Opportunity Intelligence
@@ -233,11 +314,16 @@ clearance_compliance (0.10), strategic_value (0.10)
 
 ### Phase 2: Capture Management
 Win theme generation, teaming engine, customer intelligence, black hat review,
-price-to-win estimation from FPDS historical data.
+price-to-win estimation from FPDS historical data, IDIQ vehicle management,
+recompete intelligence, small business set-aside analysis.
 
 ### Phase 3: Content Generation
 Section L/M parsing → compliance matrix → RAG retrieval from KB → AI-drafted sections.
 Volumes: I (Technical), II (Management), III (Past Performance), IV (Cost/Price).
+
+### Phase 3.5: SBIR/STTR
+SBIR/STTR proposal lifecycle (Phase I feasibility, Phase II development, Phase III
+commercialization), submission checklists, TRL 1-9 assessment, SBIR.gov topic search.
 
 ### Phase 4: Review Cycles
 | Review | Color | Focus |
@@ -246,6 +332,7 @@ Volumes: I (Technical), II (Management), III (Past Performance), IV (Cost/Price)
 | Responsiveness | Red | Evaluation criteria coverage, win themes |
 | Win Theme | Gold | Discriminators, customer focus, storytelling |
 | Final QC | White | Formatting, cross-refs, page limits, fonts |
+| AI Self-Score | — | FAR 15.305 adjectival evaluation simulation |
 
 ### Phase 5: Production
 Template-based document assembly per agency format. Auto-formatting, cross-reference
@@ -254,6 +341,11 @@ validation, acronym management, submission packaging.
 ### Phase 6: Post-Submission Learning
 Debrief capture, win/loss pattern analysis, knowledge base enrichment,
 pricing calibration from actual award data.
+
+### Phase 7: Contract Performance Management (Post-Award)
+CDRL tracking (DD Form 1423), SOW obligation compliance, deliverable milestones,
+automated reminders (30/14/7/1 day), CPARS early-warning risk scoring.
+Closes the loop: shredded requirements auto-import into contract obligations.
 
 ---
 

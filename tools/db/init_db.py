@@ -16,6 +16,7 @@ Creates tables for:
   - Review Cycles (Pink/Red/Gold/White team reviews)
   - Production (templates, formatting, packaging)
   - Learning (debriefs, win/loss analysis, pricing calibration)
+  - Contract Performance Management (post-award CDRL/SOW tracking)
   - System (audit trail, acronyms, config)
 
 Usage:
@@ -905,6 +906,329 @@ CREATE TABLE IF NOT EXISTS cloud_provider_status (
 );
 
 CREATE INDEX IF NOT EXISTS idx_cloudstatus_provider ON cloud_provider_status(provider);
+
+-- ============================================================
+-- CONTRACT PERFORMANCE MANAGEMENT (Post-Award)
+-- ============================================================
+
+-- Contracts (awarded proposals → active contract tracking)
+CREATE TABLE IF NOT EXISTS contracts (
+    id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL REFERENCES proposals(id),
+    opportunity_id TEXT REFERENCES opportunities(id),
+    contract_number TEXT,
+    contract_name TEXT NOT NULL,
+    contracting_officer TEXT,
+    cor_name TEXT,
+    cor_email TEXT,
+    contract_type TEXT CHECK(contract_type IN (
+        'ffp', 'cpff', 'cpaf', 'cpif', 't_m', 'idiq', 'bpa', 'other')),
+    contract_value REAL,
+    period_of_performance_start TEXT,
+    period_of_performance_end TEXT,
+    option_years INTEGER DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active', 'option_pending', 'completed',
+              'terminated', 'expired')),
+    cpars_risk_score REAL DEFAULT 0.0,
+    classification TEXT NOT NULL DEFAULT 'CUI // SP-PROPIN',
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_contracts_prop ON contracts(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_contracts_status ON contracts(status);
+
+-- Contract CDRLs (DD Form 1423 tracking)
+CREATE TABLE IF NOT EXISTS contract_cdrls (
+    id TEXT PRIMARY KEY,
+    contract_id TEXT NOT NULL REFERENCES contracts(id),
+    shredded_req_id TEXT REFERENCES shredded_requirements(id),
+    cdrl_number TEXT NOT NULL,
+    data_item_number TEXT,
+    di_number TEXT,
+    title TEXT NOT NULL,
+    authority TEXT,
+    frequency TEXT DEFAULT 'ONE/R'
+        CHECK(frequency IN ('ONE/R', 'MTHLY', 'QRTLY', 'SEMI',
+              'ANNLY', 'AS_REQ', 'DALI', 'OTHER')),
+    distribution_statement TEXT,
+    approval_authority TEXT,
+    submission_format TEXT DEFAULT 'electronic'
+        CHECK(submission_format IN ('electronic', 'hard_copy', 'both')),
+    due_date TEXT,
+    offset_days INTEGER,
+    next_due_date TEXT,
+    status TEXT NOT NULL DEFAULT 'not_due'
+        CHECK(status IN ('not_due', 'on_schedule', 'at_risk',
+              'delivered', 'accepted', 'rejected', 'overdue')),
+    actual_delivery_date TEXT,
+    acceptance_date TEXT,
+    rejection_reason TEXT,
+    assigned_to TEXT,
+    remarks TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_cdrls_contract ON contract_cdrls(contract_id);
+CREATE INDEX IF NOT EXISTS idx_cdrls_status ON contract_cdrls(status);
+CREATE INDEX IF NOT EXISTS idx_cdrls_due ON contract_cdrls(next_due_date);
+
+-- Contract SOW obligations (shall/must/will statements from Section C/F)
+CREATE TABLE IF NOT EXISTS contract_obligations (
+    id TEXT PRIMARY KEY,
+    contract_id TEXT NOT NULL REFERENCES contracts(id),
+    shredded_req_id TEXT REFERENCES shredded_requirements(id),
+    obligation_type TEXT NOT NULL
+        CHECK(obligation_type IN ('sow', 'deliverable', 'milestone')),
+    obligation_text TEXT NOT NULL,
+    obligation_level TEXT DEFAULT 'shall'
+        CHECK(obligation_level IN ('shall', 'must', 'will',
+              'should', 'may', 'unknown')),
+    source_section TEXT
+        CHECK(source_section IN ('section_c', 'section_f',
+              'section_h', 'other')),
+    due_date TEXT,
+    status TEXT NOT NULL DEFAULT 'not_started'
+        CHECK(status IN ('not_started', 'in_progress', 'compliant',
+              'non_compliant', 'waived', 'deferred')),
+    evidence TEXT,
+    assigned_to TEXT,
+    notes TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_obligations_contract ON contract_obligations(contract_id);
+CREATE INDEX IF NOT EXISTS idx_obligations_status ON contract_obligations(status);
+CREATE INDEX IF NOT EXISTS idx_obligations_type ON contract_obligations(obligation_type);
+CREATE INDEX IF NOT EXISTS idx_obligations_due ON contract_obligations(due_date);
+
+-- Deliverable reminders (automated deadline tracking)
+CREATE TABLE IF NOT EXISTS deliverable_reminders (
+    id TEXT PRIMARY KEY,
+    contract_id TEXT NOT NULL REFERENCES contracts(id),
+    related_type TEXT NOT NULL CHECK(related_type IN ('cdrl', 'obligation')),
+    related_id TEXT NOT NULL,
+    reminder_date TEXT NOT NULL,
+    due_date TEXT NOT NULL,
+    days_before INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    severity TEXT NOT NULL DEFAULT 'info'
+        CHECK(severity IN ('info', 'warning', 'urgent', 'overdue')),
+    status TEXT NOT NULL DEFAULT 'pending'
+        CHECK(status IN ('pending', 'acknowledged', 'dismissed')),
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    acknowledged_at TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_reminders_status ON deliverable_reminders(status);
+CREATE INDEX IF NOT EXISTS idx_reminders_date ON deliverable_reminders(reminder_date);
+CREATE INDEX IF NOT EXISTS idx_reminders_contract ON deliverable_reminders(contract_id);
+
+-- ── AI Proposal Self-Scoring Evaluator ──────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS proposal_evaluations (
+    id TEXT PRIMARY KEY,
+    proposal_id TEXT NOT NULL REFERENCES proposals(id),
+    evaluation_type TEXT NOT NULL DEFAULT 'self_score'
+        CHECK(evaluation_type IN ('self_score', 'pink_team', 'red_team', 'gold_team', 'blue_team')),
+    overall_score REAL,
+    overall_rating TEXT
+        CHECK(overall_rating IN ('outstanding', 'good', 'acceptable', 'marginal', 'unacceptable')),
+    technical_score REAL,
+    management_score REAL,
+    past_performance_score REAL,
+    cost_score REAL,
+    strengths TEXT,
+    weaknesses TEXT,
+    risks TEXT,
+    discriminators TEXT,
+    evaluation_criteria TEXT,
+    section_scores TEXT,
+    recommendation TEXT
+        CHECK(recommendation IN ('submit', 'revise', 'no_bid', 'needs_review')),
+    confidence REAL DEFAULT 0.0,
+    evaluator TEXT DEFAULT 'ai_evaluator',
+    classification TEXT NOT NULL DEFAULT 'CUI // SP-PROPIN',
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_evaluations_proposal ON proposal_evaluations(proposal_id);
+CREATE INDEX IF NOT EXISTS idx_evaluations_type ON proposal_evaluations(evaluation_type);
+
+-- ── SBIR/STTR Proposal Tracking ─────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS sbir_proposals (
+    id TEXT PRIMARY KEY,
+    proposal_id TEXT REFERENCES proposals(id),
+    opportunity_id TEXT REFERENCES opportunities(id),
+    program_type TEXT NOT NULL CHECK(program_type IN ('sbir', 'sttr')),
+    phase TEXT NOT NULL CHECK(phase IN ('phase_1', 'phase_2', 'phase_3', 'direct_to_phase_2')),
+    agency TEXT NOT NULL,
+    topic_number TEXT,
+    topic_title TEXT,
+    research_institution TEXT,
+    pi_name TEXT,
+    pi_email TEXT,
+    technical_abstract TEXT,
+    innovation_description TEXT,
+    commercialization_plan TEXT,
+    trl_current INTEGER CHECK(trl_current BETWEEN 1 AND 9),
+    trl_target INTEGER CHECK(trl_target BETWEEN 1 AND 9),
+    award_amount REAL,
+    award_date TEXT,
+    period_of_performance_months INTEGER,
+    sba_company_id TEXT,
+    sba_proposal_id TEXT,
+    status TEXT NOT NULL DEFAULT 'drafting'
+        CHECK(status IN ('drafting', 'submitted', 'under_review', 'selected', 'awarded',
+                         'not_selected', 'withdrawn', 'phase_2_invited')),
+    phase_1_contract_id TEXT,
+    keywords TEXT,
+    classification TEXT NOT NULL DEFAULT 'CUI // SP-PROPIN',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sbir_program ON sbir_proposals(program_type);
+CREATE INDEX IF NOT EXISTS idx_sbir_phase ON sbir_proposals(phase);
+CREATE INDEX IF NOT EXISTS idx_sbir_agency ON sbir_proposals(agency);
+CREATE INDEX IF NOT EXISTS idx_sbir_status ON sbir_proposals(status);
+CREATE INDEX IF NOT EXISTS idx_sbir_topic ON sbir_proposals(topic_number);
+
+-- ── Set-Aside Intelligence ──────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS set_aside_intelligence (
+    id TEXT PRIMARY KEY,
+    naics_code TEXT NOT NULL,
+    agency TEXT,
+    set_aside_type TEXT NOT NULL
+        CHECK(set_aside_type IN ('small_business', '8a', 'hubzone', 'sdvosb', 'wosb',
+                                  'edwosb', 'full_and_open', 'sole_source', 'other')),
+    fiscal_year INTEGER,
+    total_awards INTEGER DEFAULT 0,
+    total_value REAL DEFAULT 0.0,
+    average_award REAL DEFAULT 0.0,
+    top_winners TEXT,
+    size_standard TEXT,
+    naics_description TEXT,
+    opportunity_forecast TEXT,
+    market_trend TEXT CHECK(market_trend IN ('growing', 'stable', 'declining', 'new')),
+    our_eligibility INTEGER DEFAULT 0,
+    notes TEXT,
+    classification TEXT NOT NULL DEFAULT 'CUI // SP-PROPIN',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_setaside_naics ON set_aside_intelligence(naics_code);
+CREATE INDEX IF NOT EXISTS idx_setaside_type ON set_aside_intelligence(set_aside_type);
+CREATE INDEX IF NOT EXISTS idx_setaside_agency ON set_aside_intelligence(agency);
+
+-- ── Recompete / Incumbent Intelligence ──────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS recompete_tracking (
+    id TEXT PRIMARY KEY,
+    opportunity_id TEXT REFERENCES opportunities(id),
+    contract_number TEXT,
+    incumbent_name TEXT NOT NULL,
+    incumbent_cage TEXT,
+    agency TEXT NOT NULL,
+    naics_code TEXT,
+    current_value REAL,
+    pop_end_date TEXT,
+    recompete_date TEXT,
+    follow_on_type TEXT
+        CHECK(follow_on_type IN ('recompete', 'follow_on', 'bridge', 'sole_source', 'new_requirement', 'unknown')),
+    incumbent_performance TEXT
+        CHECK(incumbent_performance IN ('exceptional', 'very_good', 'satisfactory', 'marginal', 'unsatisfactory', 'unknown')),
+    displacement_difficulty TEXT
+        CHECK(displacement_difficulty IN ('easy', 'moderate', 'difficult', 'very_difficult', 'unknown')),
+    incumbent_strengths TEXT,
+    incumbent_weaknesses TEXT,
+    our_strategy TEXT,
+    intelligence_sources TEXT,
+    status TEXT NOT NULL DEFAULT 'monitoring'
+        CHECK(status IN ('monitoring', 'pre_rfp', 'rfp_released', 'proposal_submitted',
+                         'awarded_us', 'awarded_incumbent', 'awarded_other', 'cancelled')),
+    notes TEXT,
+    classification TEXT NOT NULL DEFAULT 'CUI // SP-PROPIN',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_recompete_incumbent ON recompete_tracking(incumbent_name);
+CREATE INDEX IF NOT EXISTS idx_recompete_agency ON recompete_tracking(agency);
+CREATE INDEX IF NOT EXISTS idx_recompete_status ON recompete_tracking(status);
+CREATE INDEX IF NOT EXISTS idx_recompete_recompete_date ON recompete_tracking(recompete_date);
+
+-- ── Task Order / IDIQ Management ────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS idiq_vehicles (
+    id TEXT PRIMARY KEY,
+    vehicle_name TEXT NOT NULL,
+    contract_number TEXT,
+    agency TEXT NOT NULL,
+    vehicle_type TEXT NOT NULL
+        CHECK(vehicle_type IN ('idiq', 'bpa', 'gwac', 'mac', 'single_award', 'other')),
+    ceiling_value REAL,
+    awarded_value REAL DEFAULT 0.0,
+    remaining_value REAL,
+    ordering_period_start TEXT,
+    ordering_period_end TEXT,
+    naics_codes TEXT,
+    set_aside_type TEXT,
+    holders TEXT,
+    our_position TEXT
+        CHECK(our_position IN ('prime', 'subcontractor', 'teaming', 'not_on_vehicle', 'pending')),
+    status TEXT NOT NULL DEFAULT 'active'
+        CHECK(status IN ('active', 'expired', 'pending_award', 'option_pending', 'cancelled')),
+    notes TEXT,
+    classification TEXT NOT NULL DEFAULT 'CUI // SP-PROPIN',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS task_orders (
+    id TEXT PRIMARY KEY,
+    vehicle_id TEXT NOT NULL REFERENCES idiq_vehicles(id),
+    opportunity_id TEXT REFERENCES opportunities(id),
+    proposal_id TEXT REFERENCES proposals(id),
+    task_order_number TEXT,
+    title TEXT NOT NULL,
+    agency TEXT,
+    issuing_office TEXT,
+    description TEXT,
+    order_type TEXT CHECK(order_type IN ('ffp', 'cpff', 'cpaf', 't_m', 'labor_hour', 'hybrid', 'other')),
+    estimated_value REAL,
+    awarded_value REAL,
+    period_of_performance_start TEXT,
+    period_of_performance_end TEXT,
+    status TEXT NOT NULL DEFAULT 'forecasted'
+        CHECK(status IN ('forecasted', 'rfq_released', 'proposal_submitted', 'evaluating',
+                         'awarded', 'not_awarded', 'active', 'completed', 'cancelled')),
+    fair_opportunity TEXT
+        CHECK(fair_opportunity IN ('full_competition', 'limited_sources', 'sole_source', 'exception')),
+    response_deadline TEXT,
+    awarded_to TEXT,
+    our_role TEXT CHECK(our_role IN ('prime', 'subcontractor', 'teaming', 'no_bid')),
+    win_themes TEXT,
+    notes TEXT,
+    classification TEXT NOT NULL DEFAULT 'CUI // SP-PROPIN',
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_vehicles_agency ON idiq_vehicles(agency);
+CREATE INDEX IF NOT EXISTS idx_vehicles_status ON idiq_vehicles(status);
+CREATE INDEX IF NOT EXISTS idx_vehicles_type ON idiq_vehicles(vehicle_type);
+CREATE INDEX IF NOT EXISTS idx_taskorders_vehicle ON task_orders(vehicle_id);
+CREATE INDEX IF NOT EXISTS idx_taskorders_status ON task_orders(status);
+CREATE INDEX IF NOT EXISTS idx_taskorders_agency ON task_orders(agency);
+CREATE INDEX IF NOT EXISTS idx_taskorders_deadline ON task_orders(response_deadline);
 """
 
 

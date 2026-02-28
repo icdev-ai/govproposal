@@ -24,7 +24,8 @@
 
 | Tool | Script | Purpose |
 |------|--------|---------|
-| Customer Intel | `customer_intel.py` | Agency-level customer intelligence gathering |
+| Customer Intel | `customer_intel.py` | Agency-level customer intelligence, spending analysis, relationship mapping, procurement patterns |
+| IDIQ Manager | `idiq_manager.py` | IDIQ/BPA/GWAC vehicle management, task order lifecycle, utilization/burn rate analysis, pipeline views |
 
 ## Proposal Content (`tools/proposal/`)
 
@@ -33,21 +34,23 @@
 | Section Parser | `section_parser.py` | Parse Section L/M from solicitation PDFs; `--shred` mode extracts ALL sections (C/F/H/J/L/M) |
 | Compliance Matrix | `compliance_matrix.py` | Auto-generate compliance traceability matrix |
 | Content Drafter | `content_drafter.py` | AI-drafted proposal sections with RAG retrieval |
-| Proposal Assembler | `proposal_assembler.py` | Assemble complete proposal from drafted sections |
+| Proposal Assembler | `proposal_assembler.py` | Assemble proposal from drafted sections with TOC, acronym list, compliance checking, page budget |
+| SBIR Manager | `sbir_manager.py` | SBIR/STTR lifecycle (Phase I/II/III), submission checklists, TRL assessment, topic search |
 
 ## Review (`tools/review/`)
 
 | Tool | Script | Purpose |
 |------|--------|---------|
 | Review Engine | `review_engine.py` | Unified review engine (Pink/Red/Gold/White teams) |
+| Proposal Evaluator | `proposal_evaluator.py` | AI self-scoring evaluator simulating government evaluation (FAR 15.305 adjectival ratings) |
 
 ## Production (`tools/production/`)
 
 | Tool | Script | Purpose |
 |------|--------|---------|
-| Template Engine | `template_engine.py` | Document templates per agency format |
-| Formatter | `formatter.py` | Auto-formatting (fonts, margins, page limits) |
-| Cross-Ref Validator | `cross_ref_validator.py` | Cross-reference and acronym validation |
+| Template Engine | `template_engine.py` | Document templates per agency format with Jinja2 rendering, 6 default templates, page estimation |
+| Formatter | `formatter.py` | Auto-formatting (fonts, margins, page limits), word count reports, section numbering normalization |
+| Cross-Ref Validator | `cross_ref_validator.py` | Cross-reference validation, acronym extraction (63 common word exclusions), figure/table/compliance refs |
 | Submission Packager | `submission_packager.py` | Package proposal for submission with checklists; `--format docx` for Word export |
 
 ## Knowledge Base (`tools/knowledge/`)
@@ -83,9 +86,11 @@
 
 | Tool | Script | Purpose |
 |------|--------|---------|
-| FPDS Analyzer | `fpds_analyzer.py` | Analyze FPDS.gov award data by agency/NAICS |
+| FPDS Analyzer | `fpds_analyzer.py` | Analyze FPDS.gov award data by agency/NAICS, pricing benchmarks, market landscape, HHI concentration |
 | Competitor Tracker | `competitor_tracker.py` | Track competitor wins, capabilities, pricing |
-| Price-to-Win | `price_to_win.py` | Estimate competitive pricing from historical data |
+| Price-to-Win | `price_to_win.py` | Estimate competitive pricing with strategy modifiers (aggressive/balanced/premium), win probability modeling |
+| Set-Aside Analyzer | `set_aside_analyzer.py` | Small business set-aside intelligence, SBA size standards, eligibility checking, goaling analysis |
+| Recompete Tracker | `recompete_tracker.py` | Recompete/incumbent intelligence, 5-factor displacement assessment, win strategy generation |
 
 ## CRM (`tools/crm/`)
 
@@ -115,6 +120,12 @@
 | LLM Bridge | `llm_bridge.py` | LLM integration layer for RFX pipeline |
 | Compliance | `compliance.py` | RFX compliance: CUI marking, NIST AU mapping |
 | Fine-tune Runner | `finetune_runner.py` | Unsloth/LoRA fine-tuning for proposal models |
+
+## Contract Performance Management (`tools/delivery/`)
+
+| Tool | Script | Purpose |
+|------|--------|---------|
+| Contract Manager | `contract_manager.py` | Post-award CDRL, deliverable, and SOW obligation tracking with DD 1423 fields, reminders, and CPARS early warning |
 
 ## AI Security (`tools/security/`)
 

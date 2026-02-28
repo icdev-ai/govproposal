@@ -31,6 +31,25 @@ Pages:
     /api/pricing/calculate — API: compute pricing (POST JSON)
     /api/pricing/save      — API: save scenario (POST JSON)
 
+Contract Performance Management:
+    /contracts               — Contract list with CDRL/obligation summaries
+    /contracts/<id>          — Contract detail: CDRLs, SOW obligations, reminders, timeline
+    /api/contracts/<id>/cdrl/<id>       — Update CDRL status (PATCH)
+    /api/contracts/<id>/obligation/<id> — Update obligation status (PATCH)
+    /api/contracts/<id>/reminder/<id>/acknowledge — Acknowledge reminder (POST)
+
+SBIR/STTR:
+    /sbir                — SBIR/STTR proposal listing with program/phase filters
+    /sbir/<id>           — SBIR/STTR proposal detail with checklist and TRL
+
+IDIQ/BPA/GWAC:
+    /idiq                — IDIQ vehicle listing with utilization
+    /idiq/<id>           — Vehicle detail with task orders
+
+Recompete Intelligence:
+    /recompetes          — Recompete tracking with displacement scores
+    /recompetes/<id>     — Recompete detail with incumbent profile
+
 RFX AI Proposal Engine:
     /ai-proposals            — AI proposal dashboard (all proposals with AI sections)
     /ai-proposals/<id>       — Proposal AI detail: HITL review, section editor
@@ -156,10 +175,22 @@ def _safe_json(text):
 # =========================================================================
 @app.context_processor
 def inject_globals():
+    pending_reminders = 0
+    try:
+        conn = _get_db()
+        row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM deliverable_reminders "
+            "WHERE status = 'pending' AND reminder_date <= date('now')"
+        ).fetchone()
+        pending_reminders = row["cnt"] if row else 0
+        conn.close()
+    except Exception:
+        pass
     return {
         "cui_banner": CUI_BANNER,
         "now": _now(),
         "app_name": "GovProposal Portal",
+        "pending_reminders": pending_reminders,
     }
 
 
@@ -2302,6 +2333,545 @@ def api_rfx_finetune_status():
             "FROM rfx_finetune_jobs ORDER BY created_at DESC"
         ).fetchall()
         return jsonify({"jobs": [dict(j) for j in jobs]})
+    finally:
+        conn.close()
+
+
+# =========================================================================
+# CONTRACT PERFORMANCE MANAGEMENT
+# =========================================================================
+@app.route("/contracts")
+def contracts():
+    """Contract list with CDRL/obligation summary."""
+    conn = _get_db()
+    try:
+        status_filter = request.args.get("status", "")
+        query = (
+            "SELECT c.*, o.title as opp_title, o.agency, "
+            "(SELECT COUNT(*) FROM contract_cdrls cc WHERE cc.contract_id = c.id) as cdrl_count, "
+            "(SELECT COUNT(*) FROM contract_cdrls cc WHERE cc.contract_id = c.id "
+            " AND cc.status IN ('delivered','accepted')) as cdrl_done, "
+            "(SELECT COUNT(*) FROM contract_obligations co WHERE co.contract_id = c.id) as obl_count, "
+            "(SELECT COUNT(*) FROM contract_obligations co WHERE co.contract_id = c.id "
+            " AND co.status = 'compliant') as obl_done "
+            "FROM contracts c "
+            "LEFT JOIN opportunities o ON c.opportunity_id = o.id "
+        )
+        params = []
+        if status_filter:
+            query += "WHERE c.status = ? "
+            params.append(status_filter)
+        query += "ORDER BY c.created_at DESC"
+
+        rows = conn.execute(query, params).fetchall()
+        contract_list = [dict(r) for r in rows]
+
+        # Stats
+        active_count = sum(1 for c in contract_list if c["status"] == "active")
+        total_cdrls = sum(c.get("cdrl_count", 0) for c in contract_list)
+        overdue_row = conn.execute(
+            "SELECT COUNT(*) as cnt FROM contract_cdrls WHERE status = 'overdue'"
+        ).fetchone()
+        overdue_count = overdue_row["cnt"] if overdue_row else 0
+        avg_row = conn.execute(
+            "SELECT AVG(cpars_risk_score) as avg_risk FROM contracts WHERE status = 'active'"
+        ).fetchone()
+        avg_risk = round(avg_row["avg_risk"] or 0.0, 2)
+
+        return render_template("contracts.html",
+                               contracts=contract_list,
+                               active_count=active_count,
+                               total_cdrls=total_cdrls,
+                               overdue_count=overdue_count,
+                               avg_risk=avg_risk,
+                               status_filter=status_filter)
+    except Exception as e:
+        logger.error("Error loading contracts: %s", e)
+        return render_template("contracts.html",
+                               contracts=[],
+                               active_count=0, total_cdrls=0,
+                               overdue_count=0, avg_risk=0.0,
+                               status_filter="")
+    finally:
+        conn.close()
+
+
+@app.route("/contracts/<contract_id>")
+def contract_detail(contract_id):
+    """Contract detail with CDRLs, obligations, reminders, timeline."""
+    conn = _get_db()
+    try:
+        contract = conn.execute(
+            "SELECT c.*, o.title as opp_title, o.agency "
+            "FROM contracts c "
+            "LEFT JOIN opportunities o ON c.opportunity_id = o.id "
+            "WHERE c.id = ?",
+            (contract_id,)
+        ).fetchone()
+        if not contract:
+            flash("Contract not found.", "error")
+            return redirect(url_for("contracts"))
+
+        cdrls = conn.execute(
+            "SELECT * FROM contract_cdrls WHERE contract_id = ? ORDER BY cdrl_number",
+            (contract_id,)
+        ).fetchall()
+
+        sow_obligations = conn.execute(
+            "SELECT * FROM contract_obligations WHERE contract_id = ? "
+            "AND obligation_type = 'sow' ORDER BY created_at",
+            (contract_id,)
+        ).fetchall()
+
+        deliverables = conn.execute(
+            "SELECT * FROM contract_obligations WHERE contract_id = ? "
+            "AND obligation_type IN ('deliverable', 'milestone') ORDER BY due_date",
+            (contract_id,)
+        ).fetchall()
+
+        reminders = conn.execute(
+            "SELECT * FROM deliverable_reminders WHERE contract_id = ? "
+            "AND status = 'pending' ORDER BY severity DESC, reminder_date",
+            (contract_id,)
+        ).fetchall()
+
+        # Timeline: next 90 days of due dates
+        timeline = []
+        today = _now()[:10]
+        for c in cdrls:
+            if c["next_due_date"] and c["status"] not in ("accepted", "delivered"):
+                timeline.append({
+                    "date": c["next_due_date"],
+                    "type": "CDRL",
+                    "title": f"CDRL {c['cdrl_number']}: {c['title'][:60]}",
+                    "status": c["status"],
+                })
+        for o in list(sow_obligations) + list(deliverables):
+            if o["due_date"] and o["status"] not in ("compliant", "waived"):
+                timeline.append({
+                    "date": o["due_date"],
+                    "type": o["obligation_type"].upper(),
+                    "title": o["obligation_text"][:80],
+                    "status": o["status"],
+                })
+        timeline.sort(key=lambda x: x["date"])
+        timeline = timeline[:30]  # Limit to next 30 items
+
+        # Stats
+        cdrl_total = len(cdrls)
+        cdrl_delivered = sum(1 for c in cdrls if c["status"] in ("delivered", "accepted"))
+        obl_total = len(sow_obligations) + len(deliverables)
+        obl_compliant = sum(1 for o in list(sow_obligations) + list(deliverables)
+                           if o["status"] == "compliant")
+
+        # CPARS risk
+        risk_score = contract["cpars_risk_score"] or 0.0
+        if risk_score >= 0.8:
+            risk_level = "critical"
+        elif risk_score >= 0.5:
+            risk_level = "high"
+        elif risk_score >= 0.2:
+            risk_level = "moderate"
+        else:
+            risk_level = "low"
+
+        return render_template("contract_detail.html",
+                               contract=contract,
+                               cdrls=cdrls,
+                               sow_obligations=sow_obligations,
+                               deliverables=deliverables,
+                               reminders=reminders,
+                               timeline=timeline,
+                               cdrl_total=cdrl_total,
+                               cdrl_delivered=cdrl_delivered,
+                               obl_total=obl_total,
+                               obl_compliant=obl_compliant,
+                               risk_score=risk_score,
+                               risk_level=risk_level)
+    except Exception as e:
+        logger.error("Error loading contract detail: %s", e)
+        flash("Error loading contract detail.", "error")
+        return redirect(url_for("contracts"))
+    finally:
+        conn.close()
+
+
+@app.route("/api/contracts/<contract_id>/cdrl/<cdrl_id>", methods=["PATCH"])
+def api_update_cdrl(contract_id, cdrl_id):
+    """Update CDRL status via API."""
+    data = request.get_json(silent=True) or {}
+    new_status = data.get("status")
+    if not new_status:
+        return jsonify({"error": "status required"}), 400
+
+    valid = ("not_due", "on_schedule", "at_risk", "delivered",
+             "accepted", "rejected", "overdue")
+    if new_status not in valid:
+        return jsonify({"error": f"Invalid status. Must be one of: {valid}"}), 400
+
+    conn = _get_db()
+    try:
+        cdrl = conn.execute(
+            "SELECT * FROM contract_cdrls WHERE id = ? AND contract_id = ?",
+            (cdrl_id, contract_id)
+        ).fetchone()
+        if not cdrl:
+            return jsonify({"error": "CDRL not found"}), 404
+
+        updates = ["status = ?", "updated_at = ?"]
+        params = [new_status, _now()]
+        if data.get("actual_delivery_date"):
+            updates.append("actual_delivery_date = ?")
+            params.append(data["actual_delivery_date"])
+        if new_status == "accepted":
+            updates.append("acceptance_date = ?")
+            params.append(_now()[:10])
+        if data.get("rejection_reason"):
+            updates.append("rejection_reason = ?")
+            params.append(data["rejection_reason"])
+
+        params.append(cdrl_id)
+        conn.execute(
+            f"UPDATE contract_cdrls SET {', '.join(updates)} WHERE id = ?",
+            params
+        )
+        conn.commit()
+
+        return jsonify({"updated": True, "cdrl_id": cdrl_id, "status": new_status})
+    finally:
+        conn.close()
+
+
+@app.route("/api/contracts/<contract_id>/obligation/<obl_id>", methods=["PATCH"])
+def api_update_obligation(contract_id, obl_id):
+    """Update obligation status via API."""
+    data = request.get_json(silent=True) or {}
+    new_status = data.get("status")
+    if not new_status:
+        return jsonify({"error": "status required"}), 400
+
+    valid = ("not_started", "in_progress", "compliant",
+             "non_compliant", "waived", "deferred")
+    if new_status not in valid:
+        return jsonify({"error": f"Invalid status. Must be one of: {valid}"}), 400
+
+    conn = _get_db()
+    try:
+        obl = conn.execute(
+            "SELECT * FROM contract_obligations WHERE id = ? AND contract_id = ?",
+            (obl_id, contract_id)
+        ).fetchone()
+        if not obl:
+            return jsonify({"error": "Obligation not found"}), 404
+
+        updates = ["status = ?", "updated_at = ?"]
+        params = [new_status, _now()]
+        if data.get("evidence"):
+            updates.append("evidence = ?")
+            params.append(data["evidence"])
+
+        params.append(obl_id)
+        conn.execute(
+            f"UPDATE contract_obligations SET {', '.join(updates)} WHERE id = ?",
+            params
+        )
+        conn.commit()
+
+        return jsonify({"updated": True, "obligation_id": obl_id, "status": new_status})
+    finally:
+        conn.close()
+
+
+@app.route("/api/contracts/<contract_id>/reminder/<reminder_id>/acknowledge", methods=["POST"])
+def api_acknowledge_reminder(contract_id, reminder_id):
+    """Acknowledge a pending reminder."""
+    conn = _get_db()
+    try:
+        rem = conn.execute(
+            "SELECT * FROM deliverable_reminders WHERE id = ? AND contract_id = ?",
+            (reminder_id, contract_id)
+        ).fetchone()
+        if not rem:
+            return jsonify({"error": "Reminder not found"}), 404
+
+        conn.execute(
+            "UPDATE deliverable_reminders SET status = 'acknowledged', "
+            "acknowledged_at = ? WHERE id = ?",
+            (_now(), reminder_id)
+        )
+        conn.commit()
+        return jsonify({"acknowledged": True, "reminder_id": reminder_id})
+    finally:
+        conn.close()
+
+
+# =========================================================================
+# SBIR/STTR
+# =========================================================================
+@app.route("/sbir")
+def sbir_list():
+    """SBIR/STTR proposal listing with filters."""
+    conn = _get_db()
+    try:
+        program_filter = request.args.get("program_type", "")
+        phase_filter = request.args.get("phase", "")
+
+        query = "SELECT * FROM sbir_proposals"
+        conditions, params = [], []
+        if program_filter:
+            conditions.append("program_type = ?")
+            params.append(program_filter)
+        if phase_filter:
+            conditions.append("phase = ?")
+            params.append(phase_filter)
+        if conditions:
+            query += " WHERE " + " AND ".join(conditions)
+        query += " ORDER BY created_at DESC"
+
+        rows = conn.execute(query, params).fetchall()
+        proposals = [dict(r) for r in rows]
+
+        phase1_count = sum(1 for p in proposals if p.get("phase") == "phase_1"
+                          and p.get("status") not in ("closed", "withdrawn"))
+        phase2_count = sum(1 for p in proposals if p.get("phase") == "phase_2"
+                          and p.get("status") not in ("closed", "withdrawn"))
+        trl_vals = [p["trl_current"] for p in proposals if p.get("trl_current")]
+        avg_trl = round(sum(trl_vals) / len(trl_vals), 1) if trl_vals else 0
+
+        return render_template("sbir_list.html",
+                               proposals=proposals,
+                               total_count=len(proposals),
+                               phase1_count=phase1_count,
+                               phase2_count=phase2_count,
+                               avg_trl=avg_trl,
+                               program_filter=program_filter,
+                               phase_filter=phase_filter)
+    except Exception as e:
+        logger.error("Error loading SBIR list: %s", e)
+        return render_template("sbir_list.html",
+                               proposals=[], total_count=0,
+                               phase1_count=0, phase2_count=0,
+                               avg_trl=0, program_filter="",
+                               phase_filter="")
+    finally:
+        conn.close()
+
+
+@app.route("/sbir/<proposal_id>")
+def sbir_detail(proposal_id):
+    """SBIR/STTR proposal detail."""
+    conn = _get_db()
+    try:
+        proposal = conn.execute(
+            "SELECT * FROM sbir_proposals WHERE id = ?",
+            (proposal_id,)
+        ).fetchone()
+        if not proposal:
+            flash("SBIR proposal not found.", "error")
+            return redirect(url_for("sbir_list"))
+
+        proposal = dict(proposal)
+
+        # Build checklist from sbir_manager pattern
+        checklist = []
+        phase = proposal.get("phase", "phase_1")
+        base_items = [
+            ("Technical proposal narrative", True),
+            ("Budget/cost proposal", True),
+            ("Commercialization plan", phase != "phase_1"),
+            ("Company data (DUNS, CAGE, SAM)", True),
+            ("PI/Key personnel resumes", True),
+            ("Subcontract plan", False),
+            ("Letters of support", False),
+            ("Data rights assertions", False),
+        ]
+        if proposal.get("program_type") == "sttr":
+            base_items.append(("Research institution agreement", True))
+            base_items.append(("Allocation plan (min 40% small biz, 30% RI)", True))
+
+        submitted = proposal.get("status") in ("submitted", "awarded", "phase_complete")
+        for item_text, required in base_items:
+            checklist.append({
+                "item": item_text,
+                "required": required,
+                "complete": submitted,
+            })
+
+        return render_template("sbir_detail.html",
+                               proposal=proposal,
+                               checklist=checklist)
+    except Exception as e:
+        logger.error("Error loading SBIR detail: %s", e)
+        flash("Error loading SBIR proposal.", "error")
+        return redirect(url_for("sbir_list"))
+    finally:
+        conn.close()
+
+
+# =========================================================================
+# IDIQ / BPA / GWAC
+# =========================================================================
+@app.route("/idiq")
+def idiq_list():
+    """IDIQ vehicle listing."""
+    conn = _get_db()
+    try:
+        status_filter = request.args.get("status", "")
+        query = (
+            "SELECT v.*, "
+            "(SELECT COUNT(*) FROM task_orders t WHERE t.vehicle_id = v.id) as task_order_count "
+            "FROM idiq_vehicles v"
+        )
+        params = []
+        if status_filter:
+            query += " WHERE v.status = ?"
+            params.append(status_filter)
+        query += " ORDER BY v.created_at DESC"
+
+        rows = conn.execute(query, params).fetchall()
+        vehicles = [dict(r) for r in rows]
+
+        active_count = sum(1 for v in vehicles if v.get("status") == "active")
+        total_to = sum(v.get("task_order_count", 0) for v in vehicles)
+        total_ceiling = sum(v.get("ceiling_value") or 0 for v in vehicles)
+
+        return render_template("idiq_list.html",
+                               vehicles=vehicles,
+                               total_count=len(vehicles),
+                               active_count=active_count,
+                               total_task_orders=total_to,
+                               total_ceiling=total_ceiling,
+                               status_filter=status_filter)
+    except Exception as e:
+        logger.error("Error loading IDIQ list: %s", e)
+        return render_template("idiq_list.html",
+                               vehicles=[], total_count=0,
+                               active_count=0, total_task_orders=0,
+                               total_ceiling=0, status_filter="")
+    finally:
+        conn.close()
+
+
+@app.route("/idiq/<vehicle_id>")
+def idiq_detail(vehicle_id):
+    """IDIQ vehicle detail with task orders."""
+    conn = _get_db()
+    try:
+        vehicle = conn.execute(
+            "SELECT * FROM idiq_vehicles WHERE id = ?",
+            (vehicle_id,)
+        ).fetchone()
+        if not vehicle:
+            flash("IDIQ vehicle not found.", "error")
+            return redirect(url_for("idiq_list"))
+
+        vehicle = dict(vehicle)
+
+        task_orders = [dict(r) for r in conn.execute(
+            "SELECT * FROM task_orders WHERE vehicle_id = ? ORDER BY created_at DESC",
+            (vehicle_id,)
+        ).fetchall()]
+
+        ceiling = vehicle.get("ceiling_value") or 0
+        obligated = vehicle.get("total_obligated") or 0
+        utilization_pct = round((obligated / ceiling * 100), 1) if ceiling > 0 else 0
+
+        return render_template("idiq_detail.html",
+                               vehicle=vehicle,
+                               task_orders=task_orders,
+                               task_order_count=len(task_orders),
+                               utilization_pct=utilization_pct)
+    except Exception as e:
+        logger.error("Error loading IDIQ detail: %s", e)
+        flash("Error loading IDIQ vehicle.", "error")
+        return redirect(url_for("idiq_list"))
+    finally:
+        conn.close()
+
+
+# =========================================================================
+# RECOMPETES
+# =========================================================================
+@app.route("/recompetes")
+def recompetes():
+    """Recompete intelligence listing."""
+    conn = _get_db()
+    try:
+        status_filter = request.args.get("status", "")
+        query = "SELECT * FROM recompete_tracking"
+        params = []
+        if status_filter:
+            query += " WHERE status = ?"
+            params.append(status_filter)
+        query += " ORDER BY anticipated_recompete_date ASC"
+
+        rows = conn.execute(query, params).fetchall()
+        recompete_list = [dict(r) for r in rows]
+
+        # Stats
+        upcoming_count = 0
+        today = _now()[:10]
+        for r in recompete_list:
+            rd = r.get("anticipated_recompete_date", "")
+            if rd and rd <= today[:4] + "-" + str(int(today[5:7]) + 3).zfill(2) + "-" + today[8:10]:
+                upcoming_count += 1
+
+        disp_vals = [r["displacement_score"] for r in recompete_list
+                     if r.get("displacement_score") is not None]
+        avg_displacement = round(sum(disp_vals) / len(disp_vals), 2) if disp_vals else 0
+
+        pending_count = sum(1 for r in recompete_list
+                           if r.get("our_decision") == "undecided")
+
+        return render_template("recompetes.html",
+                               recompetes=recompete_list,
+                               total_count=len(recompete_list),
+                               upcoming_count=upcoming_count,
+                               avg_displacement=avg_displacement,
+                               pending_count=pending_count,
+                               status_filter=status_filter)
+    except Exception as e:
+        logger.error("Error loading recompetes: %s", e)
+        return render_template("recompetes.html",
+                               recompetes=[], total_count=0,
+                               upcoming_count=0, avg_displacement=0,
+                               pending_count=0, status_filter="")
+    finally:
+        conn.close()
+
+
+@app.route("/recompetes/<recompete_id>")
+def recompete_detail(recompete_id):
+    """Recompete detail with displacement assessment."""
+    conn = _get_db()
+    try:
+        recompete = conn.execute(
+            "SELECT * FROM recompete_tracking WHERE id = ?",
+            (recompete_id,)
+        ).fetchone()
+        if not recompete:
+            flash("Recompete not found.", "error")
+            return redirect(url_for("recompetes"))
+
+        recompete = dict(recompete)
+
+        # Parse win strategy from JSON
+        strategy = []
+        raw_strategy = recompete.get("win_strategy")
+        if raw_strategy:
+            parsed = _safe_json(raw_strategy)
+            if isinstance(parsed, list):
+                strategy = parsed
+            elif isinstance(parsed, dict) and "items" in parsed:
+                strategy = parsed["items"]
+
+        return render_template("recompete_detail.html",
+                               recompete=recompete,
+                               strategy=strategy)
+    except Exception as e:
+        logger.error("Error loading recompete detail: %s", e)
+        flash("Error loading recompete.", "error")
+        return redirect(url_for("recompetes"))
     finally:
         conn.close()
 

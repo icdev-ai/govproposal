@@ -33,6 +33,15 @@
             <a href="{{ url_for('capabilities') }}" class="{% if '/capabilities' in request.path %}active{% endif %}">Capabilities</a>
             <a href="{{ url_for('crm') }}" class="{% if '/crm' in request.path %}active{% endif %}">CRM</a>
             <a href="{{ url_for('pricing') }}" class="{% if '/pricing' in request.path %}active{% endif %}">Pricing</a>
+            <a href="{{ url_for('sbir_list') }}" class="{% if '/sbir' in request.path %}active{% endif %}">SBIR</a>
+            <a href="{{ url_for('idiq_list') }}" class="{% if '/idiq' in request.path %}active{% endif %}">IDIQ</a>
+            <a href="{{ url_for('recompetes') }}" class="{% if '/recompetes' in request.path %}active{% endif %}">Recompetes</a>
+            <a href="{{ url_for('contracts') }}" class="{% if '/contracts' in request.path %}active{% endif %}">
+                Contracts
+                {% if pending_reminders|default(0) > 0 %}
+                <span class="badge badge-danger">{{ pending_reminders }}</span>
+                {% endif %}
+            </a>
             <a href="{{ url_for('ai_proposals') }}" class="{% if '/ai-proposals' in request.path or '/rfx' in request.path %}active{% endif %}" style="color:#2980b9;font-weight:600">⚡ AI Draft</a>
         </div>
     </nav>
